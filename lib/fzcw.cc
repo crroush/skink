@@ -50,9 +50,38 @@ int zcstream::ConcurrentPositionSet::add_offset() {
     return oneup_cnt_++;
 }
 
+void zcstream::ConcurrentPositionSet::update_min_offset() {
+    uint64_t min_offset = std::numeric_limits<uint64_t>::max();
+    for (const auto& pair : offsets_) {
+        min_offset = std::min(min_offset, pair.second.value());
+    }
+    min_offset_.store(min_offset, std::memory_order_release);
+}
+
 void zcstream::ConcurrentPositionSet::del_offset(int id) {
     absl::WriterMutexLock lock(&lock_);
-    offsets_.erase(id);
+
+    auto iter = offsets_.find(id);
+    if (iter == offsets_.end()) {
+        return;
+    }
+
+    uint64_t old_offset = iter->second.value();
+
+    // If our old offset matches the minimum offset we might have been the
+    // bottleneck, update the minimum offset value.
+    if (old_offset == min_offset()) {
+        update_min_offset();
+    }
+}
+
+uint64_t zcstream::ConcurrentPositionSet::get_offset(int id) const {
+    absl::ReaderMutexLock lock(&lock_);
+    auto iter = offsets_.find(id);
+    if (iter == offsets_.end()) {
+        return 0;
+    }
+    return iter->second.value();
 }
 
 void zcstream::ConcurrentPositionSet::inc_offset(int id, int nbytes) {
@@ -64,7 +93,7 @@ void zcstream::ConcurrentPositionSet::inc_offset(int id, int nbytes) {
         return;
     }
 
-    uint64_t old_offset = iter->second;
+    uint64_t old_offset = iter->second.value();
     iter->second += nbytes;
 
     // If our old offset matches the minimum offset we might have been the
@@ -76,11 +105,7 @@ void zcstream::ConcurrentPositionSet::inc_offset(int id, int nbytes) {
 
         // Make sure minimum wasn't updated while we waited.
         if (old_offset == min_offset()) {
-            uint64_t min_offset = std::numeric_limits<uint64_t>::max();
-            for (const auto pair : offsets_) {
-                min_offset = std::min(min_offset, pair.second);
-            }
-            min_offset_.store(min_offset, std::memory_order_release);
+            update_min_offset();
         }
 
         // Releasing lock will wake any threads waiting on data.
