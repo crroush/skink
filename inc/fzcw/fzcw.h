@@ -24,8 +24,8 @@ private:
     // A memory-mapped pointer and size that can unmap itself.
     struct MappedSizePtr {
         MappedSizePtr() = default;
-        MappedSizePtr(void* ptr, size_t size)
-            : ptr(ptr), size(size) {}
+        MappedSizePtr(void* ptr, size_t size, ssize_t map_size=-1)
+            : ptr(ptr), size(size), map_size_(map_size >= 0 ? map_size : size) {}
 
         // To prevent alising this class is move only.
         MappedSizePtr(const MappedSizePtr&) = delete;
@@ -34,12 +34,14 @@ private:
             : MappedSizePtr() {
             std::swap(ptr, b.ptr);
             std::swap(size, b.size);
+            std::swap(map_size_, b.map_size_);
         }
 
         MappedSizePtr& operator=(MappedSizePtr b) {
             unmap();
             std::swap(ptr, b.ptr);
             std::swap(size, b.size);
+            std::swap(map_size_, b.map_size_);
             return *this;
         }
 
@@ -51,12 +53,15 @@ private:
         size_t size = 0;
 
       private:
+        size_t map_size_ = 0;
+
         void unmap() {
             if (ptr) {
-                munmap(ptr, size);
+                munmap(ptr, map_size_);
             }
             ptr = nullptr;
             size = 0;
+            map_size_ = 0;
         }
     };
 

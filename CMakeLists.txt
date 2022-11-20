@@ -16,6 +16,7 @@ include(cmake/CPM.cmake)
 # enable test discovery
 enable_testing()
 
+include_directories(inc)
 add_subdirectory(third-party)
 add_subdirectory(lib)
 add_subdirectory(src)
