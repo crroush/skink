@@ -17,6 +17,7 @@ CPMAddPackage(
   GITHUB_REPOSITORY abseil/abseil-cpp
   GIT_TAG 20220623.1
   VERSION 20220623
+  OPTIONS "ABSL_PROPAGATE_CXX_STD ON"
 )
 
 CPMAddPackage(
@@ -24,6 +25,7 @@ CPMAddPackage(
   GITHUB_REPOSITORY google/benchmark
   GIT_TAG v1.7.1
   VERSION v1.7.1
+  OPTIONS "BENCHMARK_ENABLE_TESTING OFF"
 )
 
 # Add the install path to the search path for pkgconfig
