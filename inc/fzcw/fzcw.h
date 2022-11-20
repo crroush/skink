@@ -8,6 +8,7 @@
 #include <memory>
 
 // abseil
+#include <spdlog/spdlog.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 
@@ -23,7 +24,19 @@ struct zcstream {
     // 64K is a reasonable default size that balances performance and memory.
     static constexpr size_t DEFAULT_SIZE = 65536;
 
-    zcstream() = default;
+    zcstream(size_t size=DEFAULT_SIZE)
+        : failed_(mmap_buffer(size)) {}
+
+    // Returns current size of buffer, in bytes.
+    ssize_t size() const {
+        SPDLOG_DEBUG(!failed());
+        return buffer_.size;
+    }
+
+    // Returns true if the zcbuffer has failed to map memory somehow.
+    bool failed() const {
+        return failed_;
+    }
 
 private:
     // A memory-mapped pointer and size that can unmap itself.
@@ -118,9 +131,10 @@ private:
         std::atomic<uint64_t> min_offset_;
     };
 
-    // Create a new memory mapping of the given size.
-    bool mmap_buffer(size_t size);
-
     MappedSizePtr buffer_;
     ConcurrentPositionSet readers_;
+    bool failed_ = false;
+
+    // Create a new memory mapping of the given size.
+    bool mmap_buffer(size_t size);
 };
