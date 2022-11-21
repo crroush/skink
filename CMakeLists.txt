@@ -16,12 +16,13 @@ endif()
 
 # cmake package manager
 include(cmake/CPM.cmake)
+add_subdirectory(third-party)
 
-# enable test discovery
+# Enable test discovery, this should come after third-party so we don't execute
+# all of _their_ tests as well.
 enable_testing()
 
 include_directories(inc)
-add_subdirectory(third-party)
 add_subdirectory(lib)
 add_subdirectory(src)
-add_subdirectory(tests)
+add_subdirectory(test)

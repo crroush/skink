@@ -17,18 +17,61 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
+using absl::WriterMutexLock;
+using absl::ReaderMutexLock;
+
 // Get page size once at process start.
 static const int FZCW_PAGE_SIZE = getpagesize();
 
 template <typename Tinp> struct zcwriter;
 template <typename Tout> struct zcreader;
 
-struct zcstream {
-    // 64K is a reasonable default size that balances performance and memory.
-    static constexpr size_t DEFAULT_SIZE = 65536;
+// absl::ReaderMutexLock doesn't take an arbitrary lockable, this does.
+template <typename T>
+struct SCOPED_LOCKABLE ReaderScopeLock {
+    explicit ReaderScopeLock(T* lockable) SHARED_LOCK_FUNCTION(lockable)
+    : lockable_(lockable) {
+        lockable_->ReaderLock();
+    }
 
-    zcstream(size_t size=DEFAULT_SIZE)
-        : failed_(mmap_buffer(size)) {
+    ReaderScopeLock(const ReaderScopeLock &) = delete;
+    ReaderScopeLock(ReaderScopeLock&&) = delete;
+    ReaderScopeLock& operator=(const ReaderScopeLock&) = delete;
+    ReaderScopeLock& operator=(ReaderScopeLock&&) = delete;
+
+    ~ReaderScopeLock() UNLOCK_FUNCTION() {
+        lockable_->ReaderUnlock();
+    }
+
+ private:
+    T *const lockable_;
+};
+
+// absl::WriterMutexLock doesn't take an arbitrary lockable, this does.
+template <typename T>
+struct SCOPED_LOCKABLE WriterScopeLock {
+    explicit WriterScopeLock(T* lockable) EXCLUSIVE_LOCK_FUNCTION(lockable)
+    : lockable_(lockable) {
+        lockable_->Lock();
+    }
+
+    WriterScopeLock(const WriterScopeLock &) = delete;
+    WriterScopeLock(WriterScopeLock&&) = delete;
+    WriterScopeLock& operator=(const WriterScopeLock&) = delete;
+    WriterScopeLock& operator=(WriterScopeLock&&) = delete;
+
+    ~WriterScopeLock() UNLOCK_FUNCTION() { lockable_->Unlock(); }
+
+ private:
+    T *const lockable_;
+};
+
+struct zstream {
+    // 64K is a reasonable default size that balances performance and memory.
+    static constexpr size_t kDefaultSize = 65536;
+
+    zstream(size_t size=kDefaultSize)
+        : buffer_(size) {
         // We're single writer, so just add one offset to the write set.
         writer_.add_offset();
     }
@@ -36,14 +79,14 @@ struct zcstream {
     // Returns current size of buffer, in bytes.
     ssize_t size() const LOCKS_EXCLUDED(lock_) {
         SPDLOG_DEBUG(!failed());
-        absl::ReaderMutexLock lock(&lock_);
-        return buffer_.size;
+        ReaderMutexLock lock(&lock_);
+        return buffer_.size();
     }
 
     // Returns true if the zcbuffer has failed to map memory somehow.
     bool failed() const LOCKS_EXCLUDED(lock_) {
-        absl::ReaderMutexLock lock(&lock_);
-        return failed_;
+        ReaderMutexLock lock(&lock_);
+        return buffer_.data() == nullptr;
     }
 
     // Close the write end of the buffer, signaling no more data.
@@ -74,77 +117,81 @@ struct zcstream {
             return true;
         }
 
-        absl::WriterMutexLock buffer_lock(&lock_);
-        readers_.Lock();
+        // We need exclusive access to resize the buffer contents, but can just
+        // take out a reader lock for notifying waiting writers.
+        WriterMutexLock buffer_lock(&lock_);
+        ReaderScopeLock reader_lock(&readers_);
 
         // Steal the old mapped buffer, its destructor will unmap it.
-        MappedSizePtr old_buffer = std::move(buffer_);
+        MappedBuffer old_buffer = std::move(buffer_);
 
         // Try to map a new buffer, if it fails put the old one back.
-        if (!mmap_buffer(nbytes)) {
+        MappedBuffer new_buffer(nbytes);
+        if (new_buffer.data() == nullptr) {
             buffer_ = std::move(old_buffer);
-            readers_.Unlock();
             return false;
         }
 
-        uint64_t offset = writer_.get_offset(0);
-        if (old_buffer.ptr != nullptr) {
-            /// XXX: copy old contents to new buffer
+        uint64_t wroffset = writer_.get_offset(0);
+        if (old_buffer.data() != nullptr) {
+            ssize_t new_size = new_buffer.size();
+            ssize_t old_size = old_buffer.size();
+
+            void* dst = new_buffer.data() + (wroffset - old_size) % new_size;
+            void* src = old_buffer.data() + (wroffset - old_size) % old_size;
+            memcpy(dst, src, old_size);
         }
 
-        // Releasing lock will automatically notify any waiting writers that
+        // Save the new memory mapped buffer.
+        buffer_ = std::move(new_buffer);
+
+        // Releasing the lock on readers_ will notify any waiting writers that
         // there's more space available now.
-        readers_.Unlock();
         return true;
     }
 
 private:
     // A memory-mapped pointer and size that can unmap itself.
-    struct MappedSizePtr {
-        MappedSizePtr() = default;
-        MappedSizePtr(void* ptr, size_t size, ssize_t mmap_size=-1)
-            : ptr(ptr), size(size), mmap_size_(mmap_size) {
-            if (mmap_size < 0) {
-                mmap_size_ = 2*size;
-            }
+    struct MappedBuffer {
+        MappedBuffer() = default;
+        MappedBuffer(size_t size) {
+            map(size);
+        }
+
+        ~MappedBuffer() {
+            unmap();
         }
 
         // To prevent alising this class is move only.
-        MappedSizePtr(const MappedSizePtr&) = delete;
+        MappedBuffer(const MappedBuffer&) = delete;
 
-        MappedSizePtr(MappedSizePtr&& b)
-            : MappedSizePtr() {
-            std::swap(ptr, b.ptr);
-            std::swap(size, b.size);
+        MappedBuffer(MappedBuffer&& b)
+            : MappedBuffer() {
+            std::swap(ptr_, b.ptr_);
+            std::swap(size_, b.size_);
             std::swap(mmap_size_, b.mmap_size_);
         }
 
-        MappedSizePtr& operator=(MappedSizePtr b) {
+        MappedBuffer& operator=(MappedBuffer b) {
             unmap();
-            std::swap(ptr, b.ptr);
-            std::swap(size, b.size);
+            std::swap(ptr_, b.ptr_);
+            std::swap(size_, b.size_);
             std::swap(mmap_size_, b.mmap_size_);
             return *this;
         }
 
-        ~MappedSizePtr() {
-            unmap();
-        }
+              char* data()       { return static_cast<char*>(ptr_); }
+        const char* data() const { return static_cast<char*>(ptr_); }
 
-        void*  ptr  = nullptr;
-        size_t size = 0;
+        ssize_t size() const { return size_; }
 
       private:
-        size_t mmap_size_ = 0;
+        void*   ptr_  = nullptr;
+        ssize_t size_ = 0;
+        ssize_t mmap_size_ = 0;
 
-        void unmap() {
-            if (ptr) {
-                munmap(ptr, mmap_size_);
-            }
-            ptr = nullptr;
-            size = 0;
-            mmap_size_ = 0;
-        }
+        void map(ssize_t size);
+        void unmap();
     };
 
     // A set of 64-bit offsets that can be updated from multiple threads.
@@ -190,15 +237,11 @@ private:
             return min_offset_.load(std::memory_order_acquire);
         }
 
-        // Locks the entire position set for writing.
-        void Lock() ABSL_EXCLUSIVE_LOCK_FUNCTION() {
-            lock_.Lock();
-        }
-
-        // Unlocks the entire position set.
-        void Unlock() ABSL_UNLOCK_FUNCTION() {
-            lock_.Unlock();
-        }
+        // Make this object usable with scoped locks.
+        void ReaderLock()   SHARED_LOCK_FUNCTION()    { lock_.ReaderLock(); }
+        void ReaderUnlock() UNLOCK_FUNCTION()         { lock_.Unlock();     }
+        void Lock()         EXCLUSIVE_LOCK_FUNCTION() { lock_.Lock();       }
+        void Unlock()       UNLOCK_FUNCTION()         { lock_.Unlock();     }
 
     private:
         // Atomics aren't movable by default, so we have to wrap one up.  This
@@ -235,12 +278,9 @@ private:
     };
 
     mutable absl::Mutex lock_;
-    GUARDED_BY(lock_) MappedSizePtr buffer_;
+    GUARDED_BY(lock_) MappedBuffer buffer_;
     GUARDED_BY(lock_) bool failed_ = false;
 
     ConcurrentPositionSet readers_;
     ConcurrentPositionSet writer_;
-
-    // Create a new memory mapping of the given size.
-    bool mmap_buffer(size_t size) EXCLUSIVE_LOCKS_REQUIRED(lock_);
 };
