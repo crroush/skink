@@ -18,6 +18,20 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
+#ifndef NDEBUG
+#define DEBUG(x) x
+#define DCHECK(condition)                                     \
+    do {                                                      \
+        if (ABSL_PREDICT_FALSE(!(condition))) {               \
+            SPDLOG_ERROR(#condition);                         \
+            assert(false);                                    \
+        }                                                     \
+    } while(0)
+#else
+#define DEBUG(x)
+#define DCHECK(condition)
+#endif
+
 using absl::WriterMutexLock;
 using absl::ReaderMutexLock;
 
@@ -79,7 +93,7 @@ struct zstream {
 
     // Returns current size of buffer, in bytes.
     ssize_t size() const LOCKS_EXCLUDED(lock_) {
-        SPDLOG_DEBUG(!failed());
+        DCHECK(!failed());
         ReaderMutexLock lock(&lock_);
         return buffer_.size();
     }
@@ -223,7 +237,7 @@ private:
         //
         // Returns true if the bytes became available or false if all offsets
         // we were tracking were removed.
-        bool await_bytes(int nbytes) const SHARED_LOCKS_REQUIRED(Mutex());
+        bool await_bytes(size_t nbytes) const SHARED_LOCKS_REQUIRED(Mutex());
 
         // Returns the current minimum offset value.
         uint64_t min_offset() const {
@@ -268,7 +282,6 @@ private:
 
     mutable absl::Mutex lock_;
     mutable GUARDED_BY(lock_) MappedBuffer buffer_;
-    mutable GUARDED_BY(lock_) bool failed_ = false;
 
     ConcurrentPositionSet readers_;
     ConcurrentPositionSet writer_;

@@ -180,7 +180,7 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
 }
 
 ssize_t zstream::read_wait(uint64_t offset, ssize_t min_bytes) {
-    uint64_t navail = rdavail(offset);
+    ssize_t navail = rdavail(offset);
     if (navail < min_bytes) {
         if (!writer_.await_bytes(min_bytes-navail)) {
             return -1;
@@ -261,14 +261,14 @@ std::optional<uint64_t> zstream::ConcurrentPositionSet::get_offset(int id) const
     return iter->second.value();
 }
 
-bool zstream::ConcurrentPositionSet::await_bytes(int nbytes) const {
+bool zstream::ConcurrentPositionSet::await_bytes(size_t nbytes) const {
     if (offsets_.empty()) {
         return false;
     }
 
     uint64_t old_offset = min_offset();
     auto bytes_ready = [this, old_offset, nbytes]() {
-        SPDLOG_DEBUG(lock_.AssertReaderHeld());
+        DEBUG(lock_.AssertReaderHeld());
         return (min_offset() - old_offset >= nbytes) || offsets_.empty();
     };
     lock_.Await(absl::Condition(&bytes_ready));
