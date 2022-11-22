@@ -6,6 +6,7 @@
 #include <atomic>
 #include <algorithm>
 #include <memory>
+#include <optional>
 
 // abseil
 #include <spdlog/spdlog.h>
@@ -144,6 +145,10 @@ private:
               char* data()       { return static_cast<char*>(ptr_); }
         const char* data() const { return static_cast<char*>(ptr_); }
 
+        // Return pointer at given absolute offset in the buffer.
+              char* data(uint64_t off)       { return data() + off % size_; }
+        const char* data(uint64_t off) const { return data() + off % size_; }
+
         ssize_t size() const { return size_; }
 
       private:
@@ -162,6 +167,23 @@ private:
     //
     // Returns number of bytes actually written (-1 on error).
     ssize_t write(const void* ptr, ssize_t nbytes) LOCKS_EXCLUDED(lock_, readers_.Mutex());
+
+    // Reads a given number of bytes from the buffer using the given reader
+    // offset.  Blocks until all data requested is read, unless the writer
+    // is closed, in which case returns early.
+    //
+    // id     - The identifier for the reader.  If no such reader, returns -1.
+    // ptr    - Pointer to memory to read into.
+    // nbytes - Number of bytes to read.
+    // ncons  - Number of bytes actually consumed from the buffer.
+    //   This is an optimization that lets us advance the read pointer
+    //   immediately instead of waiting for the next read call.  By default, the
+    //   entire nbytes is consumed.  ncons may be less than or greater than the
+    //   number of bytes read.  When its less, the effect is equivalent to
+    //   performing overlapping reads.  When greater, disjoint read.s
+    //
+    // Returns the number of bytes actually read.
+    ssize_t read(int id, void* ptr, ssize_t nbytes, ssize_t ncons=-1) LOCKS_EXCLUDED(lock_, readers_.Mutex());
 
     // A set of 64-bit offsets that can be updated from multiple threads.
     //
@@ -195,9 +217,7 @@ private:
         }
 
         // Returns the current value of the given offset.
-        //
-        // Passing an invalid id is undefined behavior.
-        uint64_t get_offset(int id) const LOCKS_EXCLUDED(Mutex());
+        std::optional<uint64_t> get_offset(int) const LOCKS_EXCLUDED(Mutex());
 
         // Waits for a given number of bytes to become available.
         //
@@ -255,7 +275,7 @@ private:
 
     // Returns the current write offset into the buffer.
     uint64_t wroffset() const {
-        return writer_.get_offset(0);
+        return writer_.get_offset(0).value();
     }
 
     // Returns the current space in bytes available for writing.
@@ -263,12 +283,20 @@ private:
         return buffer_.size() - (wroffset() - readers_.min_offset());
     }
 
-    // Returns a pointer positioned at the current write offset.
-    char* wrptr() const SHARED_LOCKS_REQUIRED(lock_) {
-        return buffer_.data()  + (wroffset() % buffer_.size());
+    // Returns the number of bytes available for reading starting at offset.
+    uint64_t rdavail(uint64_t offset) const SHARED_LOCKS_REQUIRED(lock_) {
+        uint64_t wroff = wroffset();
+        if (wroff > offset) {
+            return wroff - offset;
+        }
+        return 0;
     }
 
     // Wait for the given number of bytes to become available for writing.  If
     // all the readers are removed before space becomes available, returns -1.
     ssize_t write_wait(ssize_t min_bytes) SHARED_LOCKS_REQUIRED(lock_, readers_.Mutex());
+
+    // Wait for the given number of bytes to become available for reading.  If
+    // the writer is closed before space becomes available, returns -1.
+    ssize_t read_wait(uint64_t offset, ssize_t min_bytes) SHARED_LOCKS_REQUIRED(lock_, writer_.Mutex());
 };

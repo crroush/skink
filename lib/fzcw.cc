@@ -79,7 +79,7 @@ bool zstream::resize(ssize_t nbytes) {
         return false;
     }
 
-    uint64_t wroffset = writer_.get_offset(0);
+    uint64_t wroffset = zstream::wroffset();
     if (old_buffer.data() != nullptr) {
         ssize_t new_size = new_buffer.size();
         ssize_t old_size = old_buffer.size();
@@ -113,7 +113,7 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
         }
 
         ssize_t nwrite = std::min(remain, navail);
-        memcpy(wrptr(), cptr, nwrite);
+        memcpy(buffer_.data(wroffset()), cptr, nwrite);
         cptr   += nwrite;
         remain -= nwrite;
 
@@ -127,16 +127,65 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
 // Wait for the given number of bytes to become available for writing.  If
 // all the readers are removed before space becomes available, returns -1.
 ssize_t zstream::write_wait(ssize_t min_bytes) {
-    if (readers_.num_offsets() == 0) {
+    if (!readers_.await_bytes(min_bytes)) {
         return -1;
     }
+    return wravail();
+}
 
-    ssize_t navail = wravail();
-    while (navail < min_bytes) {
-        readers_.await_bytes(min_bytes);
-        if (readers_.num_offsets() == 0) {
+ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
+    if (ncons < 0) {
+        ncons = nbytes;
+    }
+
+    // Ensure we have room to leave nbytes-ncons bytes in the buffer without
+    // blocking the writer.
+    if (ncons < nbytes) {
+        resize(2*(nbytes-ncons));
+    }
+
+    ReaderMutexLock lock(&lock_);
+    std::optional<uint64_t> ans = readers_.get_offset(id);
+    if (!ans) {
+        return -1;
+    }
+    uint64_t offset = ans.value();
+
+    // Cast to char pointer so we can do arithmetic.
+    char* cptr = static_cast<char*>(ptr);
+    ssize_t consumed = 0;
+    ssize_t remain   = 0;
+    while (remain) {
+        ReaderScopeLock writer_lock(&writer_);
+        ssize_t navail = read_wait(offset, 1);
+        if (navail < 0) {
+            break;
+        }
+
+        ssize_t nread = std::min(navail, remain);
+
+        memcpy(cptr, buffer_.data(offset), nread);
+        cptr   += nread;
+        remain -= nread;
+        offset += nread;
+
+        ssize_t nconsume = std::min(ncons-consumed, nread);
+        if (nconsume > 0) {
+            readers_.inc_offset(id, nconsume);
+            consumed += nconsume;
+        }
+    }
+
+    return nbytes-remain;
+}
+
+ssize_t zstream::read_wait(uint64_t offset, ssize_t min_bytes) {
+    uint64_t navail = rdavail(offset);
+    if (navail < min_bytes) {
+        if (!writer_.await_bytes(min_bytes-navail)) {
             return -1;
         }
+        navail = rdavail(offset);
     }
     return navail;
 }
@@ -203,16 +252,20 @@ void zstream::ConcurrentPositionSet::inc_offset(int id, int nbytes) {
     lock_.ReaderUnlock();
 }
 
-uint64_t zstream::ConcurrentPositionSet::get_offset(int id) const {
+std::optional<uint64_t> zstream::ConcurrentPositionSet::get_offset(int id) const {
     ReaderScopeLock lock(this);
     auto iter = offsets_.find(id);
     if (iter == offsets_.end()) {
-        return 0;
+        return {};
     }
     return iter->second.value();
 }
 
 bool zstream::ConcurrentPositionSet::await_bytes(int nbytes) const {
+    if (offsets_.empty()) {
+        return false;
+    }
+
     uint64_t old_offset = min_offset();
     auto bytes_ready = [this, old_offset, nbytes]() {
         SPDLOG_DEBUG(lock_.AssertReaderHeld());
