@@ -29,9 +29,9 @@ template <typename Tout> struct zcreader;
 // absl::ReaderMutexLock doesn't take an arbitrary lockable, this does.
 template <typename T>
 struct SCOPED_LOCKABLE ReaderScopeLock {
-    explicit ReaderScopeLock(T* lockable) SHARED_LOCK_FUNCTION(lockable)
+    explicit ReaderScopeLock(T* lockable) SHARED_LOCK_FUNCTION(lockable->Mutex())
     : lockable_(lockable) {
-        lockable_->ReaderLock();
+        lockable_->Mutex().ReaderLock();
     }
 
     ReaderScopeLock(const ReaderScopeLock &) = delete;
@@ -40,7 +40,7 @@ struct SCOPED_LOCKABLE ReaderScopeLock {
     ReaderScopeLock& operator=(ReaderScopeLock&&) = delete;
 
     ~ReaderScopeLock() UNLOCK_FUNCTION() {
-        lockable_->ReaderUnlock();
+        lockable_->Mutex().ReaderUnlock();
     }
 
  private:
@@ -50,9 +50,9 @@ struct SCOPED_LOCKABLE ReaderScopeLock {
 // absl::WriterMutexLock doesn't take an arbitrary lockable, this does.
 template <typename T>
 struct SCOPED_LOCKABLE WriterScopeLock {
-    explicit WriterScopeLock(T* lockable) EXCLUSIVE_LOCK_FUNCTION(lockable)
+    explicit WriterScopeLock(T* lockable) EXCLUSIVE_LOCK_FUNCTION(lockable->Mutex())
     : lockable_(lockable) {
-        lockable_->Lock();
+        lockable_->Mutex().WriterLock();
     }
 
     WriterScopeLock(const WriterScopeLock &) = delete;
@@ -60,7 +60,7 @@ struct SCOPED_LOCKABLE WriterScopeLock {
     WriterScopeLock& operator=(const WriterScopeLock&) = delete;
     WriterScopeLock& operator=(WriterScopeLock&&) = delete;
 
-    ~WriterScopeLock() UNLOCK_FUNCTION() { lockable_->Unlock(); }
+    ~WriterScopeLock() UNLOCK_FUNCTION() { lockable_->Mutex().WriterUnlock(); }
 
  private:
     T *const lockable_;
@@ -109,46 +109,7 @@ struct zstream {
     // so this may be a noop if it is already large enough.
     //
     // Returns true on success, false if the buffer couldn't be resized.
-    bool resize(ssize_t nbytes) LOCKS_EXCLUDED(lock_, readers_) {
-        // Roundup to page size.
-        nbytes = (nbytes + FZCW_PAGE_SIZE - 1)/FZCW_PAGE_SIZE*FZCW_PAGE_SIZE;
-
-        if (nbytes <= size()) {
-            return true;
-        }
-
-        // We need exclusive access to resize the buffer contents, but can just
-        // take out a reader lock for notifying waiting writers.
-        WriterMutexLock buffer_lock(&lock_);
-        ReaderScopeLock reader_lock(&readers_);
-
-        // Steal the old mapped buffer, its destructor will unmap it.
-        MappedBuffer old_buffer = std::move(buffer_);
-
-        // Try to map a new buffer, if it fails put the old one back.
-        MappedBuffer new_buffer(nbytes);
-        if (new_buffer.data() == nullptr) {
-            buffer_ = std::move(old_buffer);
-            return false;
-        }
-
-        uint64_t wroffset = writer_.get_offset(0);
-        if (old_buffer.data() != nullptr) {
-            ssize_t new_size = new_buffer.size();
-            ssize_t old_size = old_buffer.size();
-
-            void* dst = new_buffer.data() + (wroffset - old_size) % new_size;
-            void* src = old_buffer.data() + (wroffset - old_size) % old_size;
-            memcpy(dst, src, old_size);
-        }
-
-        // Save the new memory mapped buffer.
-        buffer_ = std::move(new_buffer);
-
-        // Releasing the lock on readers_ will notify any waiting writers that
-        // there's more space available now.
-        return true;
-    }
+    bool resize(ssize_t nbytes) LOCKS_EXCLUDED(lock_, readers_.Mutex());
 
 private:
     // A memory-mapped pointer and size that can unmap itself.
@@ -194,6 +155,14 @@ private:
         void unmap();
     };
 
+    // Writes bytes to the stream.  If not enough space is available
+    // immediately, blocks until all the data is written.  If all the readers
+    // are removed before finishing the write, then less data than requested
+    // may be written.
+    //
+    // Returns number of bytes actually written (-1 on error).
+    ssize_t write(const void* ptr, ssize_t nbytes) LOCKS_EXCLUDED(lock_, readers_.Mutex());
+
     // A set of 64-bit offsets that can be updated from multiple threads.
     //
     // Individual offsets may be updated under a reader lock, but if we have to
@@ -209,39 +178,39 @@ private:
     // out the lock and Await on it until the minimum offsets moves far enough
     // forward.  We use conditional critical sections for this which should be
     // more efficient than a condition variable.
-    struct LOCKABLE ConcurrentPositionSet {
+    struct ConcurrentPositionSet {
         // Adds a new offset to the position set, set to the current minimum.
         //
         // Returns an integer identifier for the new offset.
-        int add_offset() LOCKS_EXCLUDED(lock_);
+        int add_offset() LOCKS_EXCLUDED(Mutex());
 
         // Remove the given offset from the position set.
-        void del_offset(int id) LOCKS_EXCLUDED(lock_);
+        void del_offset(int id) LOCKS_EXCLUDED(Mutex());
 
         // Increments the given offset by some number of bytes.
-        void inc_offset(int id, int nbytes) LOCKS_EXCLUDED(lock_);
+        void inc_offset(int id, int nbytes) LOCKS_EXCLUDED(Mutex());
+
+        ssize_t num_offsets() const SHARED_LOCKS_REQUIRED(Mutex()) {
+            return offsets_.size();
+        }
 
         // Returns the current value of the given offset.
         //
         // Passing an invalid id is undefined behavior.
-        uint64_t get_offset(int id) const LOCKS_EXCLUDED(lock_);
+        uint64_t get_offset(int id) const LOCKS_EXCLUDED(Mutex());
 
         // Waits for a given number of bytes to become available.
         //
         // Returns true if the bytes became available or false if all offsets
         // we were tracking were removed.
-        bool await_bytes(int nbytes) const LOCKS_EXCLUDED(lock_);
+        bool await_bytes(int nbytes) const SHARED_LOCKS_REQUIRED(Mutex());
 
         // Returns the current minimum offset value.
         uint64_t min_offset() const {
             return min_offset_.load(std::memory_order_acquire);
         }
 
-        // Make this object usable with scoped locks.
-        void ReaderLock()   SHARED_LOCK_FUNCTION()    { lock_.ReaderLock(); }
-        void ReaderUnlock() UNLOCK_FUNCTION()         { lock_.Unlock();     }
-        void Lock()         EXCLUSIVE_LOCK_FUNCTION() { lock_.Lock();       }
-        void Unlock()       UNLOCK_FUNCTION()         { lock_.Unlock();     }
+        absl::Mutex& Mutex() const LOCK_RETURNED(lock_) { return lock_; }
 
     private:
         // Atomics aren't movable by default, so we have to wrap one up.  This
@@ -269,18 +238,37 @@ private:
             std::atomic<uint64_t> value_;
         };
 
-        void update_min_offset() EXCLUSIVE_LOCKS_REQUIRED(lock_);
+        void update_min_offset() EXCLUSIVE_LOCKS_REQUIRED(Mutex());
 
         mutable absl::Mutex lock_;
-        GUARDED_BY(lock_) absl::flat_hash_map<int, Offset> offsets_;
-        GUARDED_BY(lock_) int oneup_cnt_ = 0;
+        GUARDED_BY(Mutex()) absl::flat_hash_map<int, Offset> offsets_;
+        GUARDED_BY(Mutex()) int oneup_cnt_ = 0;
         std::atomic<uint64_t> min_offset_;
     };
 
     mutable absl::Mutex lock_;
-    GUARDED_BY(lock_) MappedBuffer buffer_;
-    GUARDED_BY(lock_) bool failed_ = false;
+    mutable GUARDED_BY(lock_) MappedBuffer buffer_;
+    mutable GUARDED_BY(lock_) bool failed_ = false;
 
     ConcurrentPositionSet readers_;
     ConcurrentPositionSet writer_;
+
+    // Returns the current write offset into the buffer.
+    uint64_t wroffset() const {
+        return writer_.get_offset(0);
+    }
+
+    // Returns the current space in bytes available for writing.
+    uint64_t wravail() const SHARED_LOCKS_REQUIRED(lock_) {
+        return buffer_.size() - (wroffset() - readers_.min_offset());
+    }
+
+    // Returns a pointer positioned at the current write offset.
+    char* wrptr() const SHARED_LOCKS_REQUIRED(lock_) {
+        return buffer_.data()  + (wroffset() % buffer_.size());
+    }
+
+    // Wait for the given number of bytes to become available for writing.  If
+    // all the readers are removed before space becomes available, returns -1.
+    ssize_t write_wait(ssize_t min_bytes) SHARED_LOCKS_REQUIRED(lock_, readers_.Mutex());
 };
