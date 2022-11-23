@@ -92,7 +92,7 @@ bool zstream::resize(ssize_t nbytes) {
         return false;
     }
 
-    int64_t wroffset = zstream::wroffset();
+    int64_t wroffset = wroffset_;
     if (old_buffer.data() != nullptr) {
         ssize_t new_size = new_buffer.size();
         ssize_t old_size = old_buffer.size();
@@ -127,7 +127,7 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
         }
 
         ssize_t nwrite = std::min(remain, navail);
-        memcpy(buffer_.data(wroffset()), cptr, nwrite);
+        memcpy(buffer_.data(wroffset_), cptr, nwrite);
         cptr   += nwrite;
         remain -= nwrite;
 
@@ -223,12 +223,8 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
 }
 
 ssize_t zstream::read_wait(int64_t offset, ssize_t min_bytes) {
-    // const auto readavail = [this, offset]() {
-    //     return wroffset() - offset;
-    // };
-
-    //ssize_t navail = readavail();
-    ssize_t navail = wroffset() - offset;
+    // See if we have data available already.
+    ssize_t navail = wroffset_ - offset;
     if (navail >= min_bytes) {
         return navail;
     }
@@ -243,7 +239,7 @@ ssize_t zstream::read_wait(int64_t offset, ssize_t min_bytes) {
             asm("");
         }
 
-        navail = wroffset() - offset;
+        navail = wroffset_ - offset;
         if (navail >= min_bytes) {
             return navail;
         }
@@ -255,7 +251,7 @@ ssize_t zstream::read_wait(int64_t offset, ssize_t min_bytes) {
         const int64_t min_offset = offset + (min_bytes - navail);
         auto ready = [this, min_offset]() {
             DEBUG(wroff_lock_.AssertReaderHeld());
-            return wroffset() >= min_offset || !wropen();
+            return wroffset_ >= min_offset || !wropen();
         };
         wroff_lock_.Await(absl::Condition(&ready));
     }
@@ -265,7 +261,7 @@ ssize_t zstream::read_wait(int64_t offset, ssize_t min_bytes) {
     if (!wropen()) {
         return -1;
     }
-    return wroffset() - offset;
+    return wroffset_ - offset;
 }
 
 int zstream::ConcurrentPositionSet::add_offset() {
@@ -282,7 +278,7 @@ void zstream::ConcurrentPositionSet::del_offset(int id) {
         return;
     }
 
-    int64_t old_offset = iter->second.value();
+    int64_t old_offset = iter->second;
 
     // If our old offset matches the minimum offset we might have been the
     // bottleneck, update the minimum offset value.
@@ -296,7 +292,9 @@ void zstream::ConcurrentPositionSet::update_min_offset() {
     for (const auto& pair : offsets_) {
         min_offset = std::min(min_offset, pair.second.value());
     }
-    min_offset_.store(min_offset, std::memory_order_release);
+
+    // Make new minimum visible to other threads.
+    min_offset_ = min_offset;
 }
 
 void zstream::ConcurrentPositionSet::inc_offset(int id, int nbytes) {

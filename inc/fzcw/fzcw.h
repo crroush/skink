@@ -210,6 +210,41 @@ private:
         void unmap();
     };
 
+    // An atomic integer that's movable so it can be used in containers.  This
+    // wraps a std::atomic<int64_t> and allows accessing it with acquire/release
+    // semantics by default, to avoid having to specify memory ordering
+    // everywhere.
+    //
+    // X86 has acquire/release semantics natively so this has no overhead there.
+    struct AtomicInt64 {
+        AtomicInt64(int64_t value=0)
+            : value_(value) {}
+
+        AtomicInt64(AtomicInt64&& b) {
+            *this = static_cast<int64_t>(b);
+        }
+
+        int64_t value() const {
+            return static_cast<int64_t>(*this);
+        }
+
+        operator int64_t() const {
+            return value_.load(std::memory_order_acquire);
+        }
+
+        AtomicInt64& operator=(int64_t value) {
+            value_.store(value, std::memory_order_release);
+            return *this;
+        }
+
+        AtomicInt64& operator+=(int64_t val) {
+            value_.fetch_add(val, std::memory_order_acq_rel);
+            return *this;
+        }
+    private:
+        std::atomic<int64_t> value_;
+    };
+
     // A set of 64-bit offsets that can be updated from multiple threads.
     //
     // Individual offsets may be updated under a reader lock, but if we have to
@@ -251,45 +286,18 @@ private:
         bool await_bytes(ssize_t nbytes) const SHARED_LOCKS_REQUIRED(Mutex());
 
         // Returns the current minimum offset value.
-        int64_t min_offset() const {
-            return min_offset_.load(std::memory_order_acquire);
-        }
+        int64_t min_offset() const { return min_offset_; }
 
         absl::Mutex& Mutex() const LOCK_RETURNED(lock_) { return lock_; }
 
     private:
-        // Atomics aren't movable by default, so we have to wrap one up.  This
-        // lets us use it with absl::flat_hash_map which may need to resize and
-        // move its contents.  We synchronize access to the offsets table using
-        // a mutex so this is safe.
-        struct Offset {
-            Offset(int64_t value=0) : value_(value) {}
-            Offset(Offset&& b) {
-                value_.store(
-                    b.value_.load(std::memory_order_acquire),
-                    std::memory_order_release);
-            }
-
-            int64_t value() const {
-                return value_.load(std::memory_order_acquire);
-            }
-
-            Offset& operator+=(int64_t val) {
-                value_.fetch_add(val, std::memory_order_acq_rel);
-                return *this;
-            }
-
-        private:
-            std::atomic<int64_t> value_;
-        };
-
         void update_min_offset() EXCLUSIVE_LOCKS_REQUIRED(Mutex());
 
         mutable absl::Mutex lock_;
-        GUARDED_BY(Mutex()) absl::flat_hash_map<int, Offset> offsets_;
+        GUARDED_BY(Mutex()) absl::flat_hash_map<int, AtomicInt64> offsets_;
         GUARDED_BY(Mutex()) int oneup_cnt_ = 0;
 
-        std::atomic<int64_t> min_offset_ = 0;
+        AtomicInt64 min_offset_ = 0;
     };
 
     mutable absl::Mutex lock_ ACQUIRED_BEFORE(readers_.Mutex());
@@ -297,26 +305,23 @@ private:
     ConcurrentPositionSet readers_;
 
     mutable absl::Mutex wroff_lock_ ACQUIRED_AFTER(lock_);
-    std::atomic<int64_t> wroffset_ = 0;
-    std::atomic<bool>     wropen_   = true;
+    AtomicInt64 wroffset_ = 0;
+    std::atomic<bool> wropen_ = true;
 
     bool wropen() const {
         return wropen_.load(std::memory_order_acquire);
     }
 
-    // Returns the current write offset into the buffer.
-    int64_t wroffset() const {
-        return wroffset_.load(std::memory_order_acquire);
-    }
-
     void wroff_advance(int64_t val) {
+        // Note we don't need an atomic fetch_add here, all that matters is that
+        // other threads see the new offset, not that it updated atomically.
         WriterMutexLock lock(&wroff_lock_);
-        wroffset_.fetch_add(val, std::memory_order_acq_rel);
+        wroffset_ = wroffset_ + val;
     }
 
     // Returns the current space in bytes available for writing.
     int64_t wravail() const SHARED_LOCKS_REQUIRED(lock_) {
-        return buffer_.size() - (wroffset() - readers_.min_offset());
+        return buffer_.size() - (wroffset_ - readers_.min_offset());
     }
 
     // Wait for the given number of bytes to become available for writing.  If
