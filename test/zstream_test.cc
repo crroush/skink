@@ -18,4 +18,3 @@ TEST(zstream, ResizeWorks) {
     stream.resize(kOneMb);
     EXPECT_THAT(stream.size(), Ge(kOneMb));
 }
-

@@ -4,6 +4,7 @@ target_link_libraries(
   libfzcw
   spdlog
   CLI11
+  absl::flat_hash_map
 )
 
 

@@ -3,7 +3,21 @@
 
 #include <fzcw/fzcw.h>
 
+#include <absl/base/attributes.h>
+
 #include <limits>
+
+// Return current wall clock time, in seconds.
+inline double stopwatch() {
+    struct timespec tv;
+    clock_gettime(CLOCK_MONOTONIC, &tv);
+    return tv.tv_sec + (double)tv.tv_nsec/1e9;
+}
+
+// Return time elapsed since a given start time, in seconds.
+inline double stopwatch(double start) {
+    return stopwatch()-start;
+}
 
 void zstream::MappedBuffer::map(ssize_t size) {
     SPDLOG_DEBUG(ptr_ == nullptr);
@@ -67,7 +81,6 @@ bool zstream::resize(ssize_t nbytes) {
     // We need exclusive access to resize the buffer contents, but can just
     // take out a reader lock for notifying waiting writers.
     WriterMutexLock buffer_lock(&lock_);
-    ReaderScopeLock reader_lock(&readers_);
 
     // Steal the old mapped buffer, its destructor will unmap it.
     MappedBuffer old_buffer = std::move(buffer_);
@@ -79,7 +92,7 @@ bool zstream::resize(ssize_t nbytes) {
         return false;
     }
 
-    uint64_t wroffset = zstream::wroffset();
+    int64_t wroffset = zstream::wroffset();
     if (old_buffer.data() != nullptr) {
         ssize_t new_size = new_buffer.size();
         ssize_t old_size = old_buffer.size();
@@ -106,8 +119,9 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
     const char* cptr = static_cast<const char*>(ptr);
     ssize_t remain = nbytes;
     while (remain) {
-        ReaderScopeLock readers_lock(&readers_);
+        DEBUG(fprintf(stderr, "[w] waiting for more write space\n"));
         ssize_t navail = write_wait(1);
+        DEBUG(fprintf(stderr, "[w] done, navail: %ld\n", navail));
         if (navail < 0) {
             break;
         }
@@ -119,15 +133,42 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
 
         // Increment the write offset, this will notify any waiting readers
         // that more data is available.
-        writer_.inc_offset(0, nwrite);
+        DEBUG(fprintf(stderr, "[w] incrementing write offset\n"));
+        wroff_advance(nwrite);
     }
+    DEBUG(fprintf(stderr, "[w] wrote %ld bytes\n", nbytes-remain));
     return nbytes-remain;
 }
 
 // Wait for the given number of bytes to become available for writing.  If
 // all the readers are removed before space becomes available, returns -1.
 ssize_t zstream::write_wait(ssize_t min_bytes) {
-    if (!readers_.await_bytes(min_bytes)) {
+    // Check if we have space already.
+    ssize_t navail = wravail();
+    if (navail >= min_bytes) {
+        return navail;
+    }
+
+    // Spin for up to 1ms before falling back to mutex.
+    double start = stopwatch();
+    do {
+        // Throttle how often we hit clock_gettime since it has to call out to
+        // to the VDSO.  The empty asm() call here provides a compiler barrier
+        // so that this loop isn't optimized out.
+        for (int i=0; i < 1000; i++) {
+            asm("");
+        }
+
+        navail = wravail();
+        if (navail >= min_bytes) {
+            return navail;
+        }
+    } while (stopwatch(start) < 1e-3);
+
+    // Finally fall back to using the mutex to sleep.
+    ReaderScopeLock readers_lock(&readers_);
+    DEBUG(fprintf(stderr, "[w] write avail: %zd\n", navail));
+    if (!readers_.await_bytes(min_bytes-navail)) {
         return -1;
     }
     return wravail();
@@ -144,20 +185,21 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
         resize(2*(nbytes-ncons));
     }
 
-    ReaderMutexLock lock(&lock_);
-    std::optional<uint64_t> ans = readers_.get_offset(id);
+    ReaderMutexLock stream_lock(&lock_);
+    std::optional<int64_t> ans = readers_.get_offset(id);
     if (!ans) {
         return -1;
     }
-    uint64_t offset = ans.value();
+    int64_t offset = ans.value();
 
     // Cast to char pointer so we can do arithmetic.
     char* cptr = static_cast<char*>(ptr);
     ssize_t consumed = 0;
-    ssize_t remain   = 0;
+    ssize_t remain   = nbytes;
     while (remain) {
-        ReaderScopeLock writer_lock(&writer_);
+        DEBUG(fprintf(stderr, "[r] waiting for more read space\n"));
         ssize_t navail = read_wait(offset, 1);
+        DEBUG(fprintf(stderr, "[r] done, navail: %ld\n", navail));
         if (navail < 0) {
             break;
         }
@@ -176,18 +218,54 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
         }
     }
 
+    DEBUG(fprintf(stderr, "[r] read %ld bytes\n", nbytes-remain));
     return nbytes-remain;
 }
 
-ssize_t zstream::read_wait(uint64_t offset, ssize_t min_bytes) {
-    ssize_t navail = rdavail(offset);
-    if (navail < min_bytes) {
-        if (!writer_.await_bytes(min_bytes-navail)) {
-            return -1;
-        }
-        navail = rdavail(offset);
+ssize_t zstream::read_wait(int64_t offset, ssize_t min_bytes) {
+    // const auto readavail = [this, offset]() {
+    //     return wroffset() - offset;
+    // };
+
+    //ssize_t navail = readavail();
+    ssize_t navail = wroffset() - offset;
+    if (navail >= min_bytes) {
+        return navail;
     }
-    return navail;
+
+    // Spin for up to 1ms before falling back to mutex.
+    double start = stopwatch();
+    do {
+        // Throttle how often we hit clock_gettime since it has to call out to
+        // to the VDSO.  The empty asm() call here provides a compiler barrier
+        // so that this loop isn't optimized out.
+        for (int i=0; i < 1000; i++) {
+            asm("");
+        }
+
+        navail = wroffset() - offset;
+        if (navail >= min_bytes) {
+            return navail;
+        }
+    } while (stopwatch(start) < 1e-3);
+
+    // Finally fall back to using the mutex to wait.
+    wroff_lock_.ReaderLock();
+    {
+        const int64_t min_offset = offset + (min_bytes - navail);
+        auto ready = [this, min_offset]() {
+            DEBUG(wroff_lock_.AssertReaderHeld());
+            return wroffset() >= min_offset || !wropen();
+        };
+        wroff_lock_.Await(absl::Condition(&ready));
+    }
+    wroff_lock_.ReaderUnlock();
+
+    // If we woke back up because the writer closed, return error.
+    if (!wropen()) {
+        return -1;
+    }
+    return wroffset() - offset;
 }
 
 int zstream::ConcurrentPositionSet::add_offset() {
@@ -204,7 +282,7 @@ void zstream::ConcurrentPositionSet::del_offset(int id) {
         return;
     }
 
-    uint64_t old_offset = iter->second.value();
+    int64_t old_offset = iter->second.value();
 
     // If our old offset matches the minimum offset we might have been the
     // bottleneck, update the minimum offset value.
@@ -214,7 +292,7 @@ void zstream::ConcurrentPositionSet::del_offset(int id) {
 }
 
 void zstream::ConcurrentPositionSet::update_min_offset() {
-    uint64_t min_offset = std::numeric_limits<uint64_t>::max();
+    int64_t min_offset = std::numeric_limits<int64_t>::max();
     for (const auto& pair : offsets_) {
         min_offset = std::min(min_offset, pair.second.value());
     }
@@ -230,7 +308,7 @@ void zstream::ConcurrentPositionSet::inc_offset(int id, int nbytes) {
         return;
     }
 
-    uint64_t old_offset = iter->second.value();
+    int64_t old_offset = iter->second.value();
     iter->second += nbytes;
 
     // If our old offset matches the minimum offset we might have been the
@@ -252,8 +330,8 @@ void zstream::ConcurrentPositionSet::inc_offset(int id, int nbytes) {
     lock_.ReaderUnlock();
 }
 
-std::optional<uint64_t> zstream::ConcurrentPositionSet::get_offset(int id) const {
-    ReaderScopeLock lock(this);
+std::optional<int64_t> zstream::ConcurrentPositionSet::get_offset(int id) const {
+    ReaderMutexLock lock(&lock_);
     auto iter = offsets_.find(id);
     if (iter == offsets_.end()) {
         return {};
@@ -261,14 +339,15 @@ std::optional<uint64_t> zstream::ConcurrentPositionSet::get_offset(int id) const
     return iter->second.value();
 }
 
-bool zstream::ConcurrentPositionSet::await_bytes(size_t nbytes) const {
+bool zstream::ConcurrentPositionSet::await_bytes(ssize_t nbytes) const {
+    DEBUG(Mutex().AssertReaderHeld());
     if (offsets_.empty()) {
         return false;
     }
 
-    uint64_t old_offset = min_offset();
-    auto bytes_ready = [this, old_offset, nbytes]() {
-        DEBUG(lock_.AssertReaderHeld());
+    int64_t old_offset = min_offset();
+    const auto bytes_ready = [this, old_offset, nbytes]() {
+        DEBUG(Mutex().AssertReaderHeld());
         return (min_offset() - old_offset >= nbytes) || offsets_.empty();
     };
     lock_.Await(absl::Condition(&bytes_ready));
