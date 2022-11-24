@@ -44,6 +44,7 @@ template <typename Tout> struct zcreader;
 struct zstream {
     // 64K is a reasonable default size that balances performance and memory.
     static constexpr size_t kDefaultSize = 65536;
+    static constexpr double kDefaultSpinLimit = 1e-3;
 
     zstream(size_t size=kDefaultSize)
         : buffer_(size) {}
@@ -117,6 +118,15 @@ struct zstream {
     //
     // Returns the number of bytes actually read.
     ssize_t read(int id, void* ptr, ssize_t nbytes, ssize_t ncons=-1) LOCKS_EXCLUDED(buffer_lock_);
+
+    // Get/set the time limit for spinning waiting for data.
+    double get_spin_limit() const {
+        return spin_limit_.load(std::memory_order_acquire);
+    }
+
+    void set_spin_limit(double seconds) {
+        spin_limit_.store(seconds, std::memory_order_release);
+    }
 
 private:
     // A memory-mapped pointer and size that can unmap itself.
@@ -192,66 +202,148 @@ private:
             value_.store(value, std::memory_order_release);
             return *this;
         }
-
-        AtomicInt64& operator+=(int64_t val) {
-            value_.fetch_add(val, std::memory_order_acq_rel);
-            return *this;
-        }
     private:
         std::atomic<int64_t> value_;
     };
 
-    // An individual offset in the stream.  These are aligned and sized to fit
-    // on a single cache line so that we can write to them without false sharing
-    // between threads.
-    struct Offset : AtomicInt64 {
-        using AtomicInt64::AtomicInt64;
+    // Offsets are half-synchronized atomic values.  This means we rely on the
+    // semantics of std::atomic to allow reading of the current value without
+    // holding a mutex.  Modifying the value, however always requires holding an
+    // exclusive lock.
+    //
+    // This allows us to safely use the value, but only synchronize via the
+    // mutex when we need to wait on the offset to reach a certain value.
+    //
+    // We take advantage of this in several places to perform double-check
+    // locking.  We can check the value first without the mutex, then if needed,
+    // take out the mutex, check it again and proceed.
+    struct Offset {
+        // Sentinel value indicating this offset has been shut down.
+        static constexpr int64_t kClosed = -1;
 
-        Offset& operator=(int64_t value) {
-            AtomicInt64::operator=(value);
+        Offset(int64_t value=0)
+            : value_(value) {}
+
+        Offset(const Offset& b) LOCKS_EXCLUDED(lock_, b.lock_)
+            : value_(static_cast<int64_t>(b)) {}
+
+        Offset(Offset&& b) LOCKS_EXCLUDED(lock_, b.lock_)
+            : value_(static_cast<int64_t>(b)) {}
+
+        // Get the underlying value atomicly without a lock.
+        int64_t value() const NO_THREAD_SAFETY_ANALYSIS {
+            return value_;
+        }
+
+        // Set the underlying value atomicly.  Requires that the lock is held.
+        void set_atomic(int64_t value) EXCLUSIVE_LOCKS_REQUIRED(lock_) {
+            value_ = value;
+        }
+
+        operator int64_t() const {
+            return value();
+        }
+
+        Offset& operator=(int64_t value) LOCKS_EXCLUDED(lock_) {
+            WriterMutexLock lock(&lock_);
+            value_ = value;
             return *this;
         }
+
+        Offset& operator+=(int64_t val) LOCKS_EXCLUDED(lock_) {
+            WriterMutexLock lock(&lock_);
+            value_ = value_ + val;
+            return *this;
+        }
+
+        // Set the value to v if v is greater than the current value, otherwise
+        // do nothing.  Return the current value.
+        int64_t SetMax(int64_t v) LOCKS_EXCLUDED(lock_) {
+            int64_t curval = value();
+            if (v <= curval) {
+                return curval;
+            }
+
+            lock_.WriterLock();
+            curval = value();
+            if (v > curval) {
+                value_ = v;
+                curval = v;
+            }
+            lock_.WriterUnlock();
+            return curval;
+        }
+
+        // Blocks until the value is >= v, or if the offset was closed.  If
+        // the value is already >= v, then no lock is taken.
+        //
+        // Returns the current value which is always >= v or kClosed.
+        int64_t AwaitGe(int64_t v) const LOCKS_EXCLUDED(lock_) {
+            int64_t curval = value();
+            if (curval >= v) {
+                return curval;
+            }
+
+            lock_.ReaderLock();
+            curval = value_;
+            if (curval < v) {
+                const auto ready = [this, v]() {
+                    DEBUG(lock_.AssertReaderHeld());
+                    return value_ >= v || value_ == kClosed;
+                };
+                lock_.Await(absl::Condition(&ready));
+                curval = value_;
+            }
+            lock_.ReaderUnlock();
+            return curval;
+        }
+
+        void Lock() const EXCLUSIVE_LOCK_FUNCTION(lock_) {
+            lock_.WriterLock();
+        }
+
+        void Unlock() const UNLOCK_FUNCTION(lock_) {
+            lock_.WriterUnlock();
+        }
+
+    private:
+        mutable absl::Mutex lock_;
+        GUARDED_BY(lock_) AtomicInt64 value_;
     };
 
     mutable absl::Mutex buffer_lock_;
-    mutable absl::Mutex writer_lock_;
     mutable absl::Mutex reader_lock_;
-    mutable absl::Mutex min_rdoff_lock_;
 
     GUARDED_BY(buffer_lock_) MappedBuffer buffer_;
-    GUARDED_BY(reader_lock_) absl::flat_hash_map<int, Offset> readers_;
+    GUARDED_BY(reader_lock_) absl::flat_hash_map<int, AtomicInt64> readers_;
     GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
 
     Offset wroffset_ = 0;
     Offset min_read_offset_ = 0;
     std::atomic<bool> wropen_ = true;
+    std::atomic<double> spin_limit_ = kDefaultSpinLimit;
 
-    void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_, min_rdoff_lock_);
-
-    // void set_minrdoff(int64_t offset) LOCKS_EXCLUDED(min_rdoff_lock_);
+    void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_);
 
     bool wropen() const {
         return wropen_.load(std::memory_order_acquire);
     }
 
-    void wroff_advance(int64_t val) {
-        // Note we don't need an atomic fetch_add here, all that matters is that
-        // other threads see the new offset, not that it updated atomically.
-        WriterMutexLock lock(&writer_lock_);
-        wroffset_ = wroffset_ + val;
-    }
-
-    // Returns the current space in bytes available for writing.
+    // Return current space in bytes available for writing.
     int64_t wravail() const SHARED_LOCKS_REQUIRED(buffer_lock_) {
-        //        DEBUG(fprintf(stderr, "[w] offset: %zd  min_offset: %zd\n", (int64_t)wroffset_, readers_.min_offset()));
         return buffer_.size() - (wroffset_ - min_read_offset_);
     }
 
-    // Wait for the given number of bytes to become available for writing.  If
-    // all the readers are removed before space becomes available, returns -1.
-    ssize_t write_wait(ssize_t min_bytes) SHARED_LOCKS_REQUIRED(buffer_lock_);
+    // Return the number of bytes available for reading starting at offset.
+    int64_t rdavail(int64_t offset) const {
+        return wroffset_ - offset;
+    }
+
+    // Block until the given number of bytes are available for writing.  If all
+    // the readers are removed before space becomes available, returns -1.
+    ssize_t await_write_space(ssize_t min_bytes) SHARED_LOCKS_REQUIRED(buffer_lock_);
 
     // Wait for the given number of bytes to become available for reading.  If
     // the writer is closed before space becomes available, returns -1.
-    ssize_t read_wait(int64_t offset, ssize_t min_bytes) LOCKS_EXCLUDED(writer_lock_);
+    ssize_t await_data(int64_t offset, ssize_t min_bytes) SHARED_LOCKS_REQUIRED(buffer_lock_);
 };

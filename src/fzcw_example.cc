@@ -78,13 +78,18 @@ private:
 
 
 static inline void benchmark() {
+    // constexpr ssize_t buffer_sizes[] = {
+    //     4096, 8192, 16384, 32768, 65536, 131072, 262144,
+    //     524288, 1048576, 2097152, 4194304, 8388608
+    // };
+
     constexpr ssize_t buffer_sizes[] = {
-        4096, 8192, 16384, 32768, 65536, 131072, 262144,
-        524288, 1048576, 2097152, 4194304, 8388608
+        65536
     };
 
     //constexpr ssize_t  num_readers[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    constexpr ssize_t  num_readers[] = { 1, 2 };
+    //constexpr ssize_t  num_readers[] = { 1, 2 };
+    constexpr ssize_t  num_readers[] = { 4 };
 
     constexpr ssize_t nbyte = 1ull << 34; // 16GB
 
@@ -114,7 +119,7 @@ static inline void benchmark() {
             }
 
             double telapsed = stopwatch(tstart);
-            printf("%7zd %zd %zd %.9e %.9e %d\n", bufsize, stream->size(), nreader, nbyte/telapsed, nreader*nbyte/telapsed, passed);
+            printf("%8zd %8zd %zd %.9e %.9e %d\n", bufsize, stream->size(), nreader, nbyte/telapsed, nreader*nbyte/telapsed, passed);
             fflush(stdout);
         }
     }
