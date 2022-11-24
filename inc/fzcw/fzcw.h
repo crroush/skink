@@ -44,7 +44,7 @@ template <typename Tout> struct zcreader;
 struct zstream {
     // 64K is a reasonable default size that balances performance and memory.
     static constexpr size_t kDefaultSize = 65536;
-    static constexpr double kDefaultSpinLimit = 1e-3;
+    static constexpr double kDefaultSpinLimit = 2e-3;
 
     zstream(size_t size=kDefaultSize)
         : buffer_(size) {}
