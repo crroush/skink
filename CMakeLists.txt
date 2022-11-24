@@ -21,7 +21,7 @@ enable_testing()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Werror -gmlt")
 # -fsanitize=thread")
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  set(CMAKE_CXX_FLAGS_DEBUG "-Wthread-safety")
+  set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -Wthread-safety")
 endif()
 
 include_directories(inc)

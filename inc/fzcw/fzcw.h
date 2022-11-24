@@ -41,46 +41,6 @@ static const int FZCW_PAGE_SIZE = getpagesize();
 template <typename Tinp> struct zcwriter;
 template <typename Tout> struct zcreader;
 
-// absl::ReaderMutexLock doesn't take an arbitrary lockable, this does.
-template <typename T>
-struct SCOPED_LOCKABLE ReaderScopeLock {
-    explicit ReaderScopeLock(T* lockable) SHARED_LOCK_FUNCTION(lockable->Mutex())
-    : lockable_(lockable) {
-        lockable_->Mutex().ReaderLock();
-    }
-
-    ReaderScopeLock(const ReaderScopeLock &) = delete;
-    ReaderScopeLock(ReaderScopeLock&&) = delete;
-    ReaderScopeLock& operator=(const ReaderScopeLock&) = delete;
-    ReaderScopeLock& operator=(ReaderScopeLock&&) = delete;
-
-    ~ReaderScopeLock() UNLOCK_FUNCTION() {
-        lockable_->Mutex().ReaderUnlock();
-    }
-
- private:
-    T *const lockable_;
-};
-
-// absl::WriterMutexLock doesn't take an arbitrary lockable, this does.
-template <typename T>
-struct SCOPED_LOCKABLE WriterScopeLock {
-    explicit WriterScopeLock(T* lockable) EXCLUSIVE_LOCK_FUNCTION(lockable->Mutex())
-    : lockable_(lockable) {
-        lockable_->Mutex().WriterLock();
-    }
-
-    WriterScopeLock(const WriterScopeLock &) = delete;
-    WriterScopeLock(WriterScopeLock&&) = delete;
-    WriterScopeLock& operator=(const WriterScopeLock&) = delete;
-    WriterScopeLock& operator=(WriterScopeLock&&) = delete;
-
-    ~WriterScopeLock() UNLOCK_FUNCTION() { lockable_->Mutex().WriterUnlock(); }
-
- private:
-    T *const lockable_;
-};
-
 struct zstream {
     // 64K is a reasonable default size that balances performance and memory.
     static constexpr size_t kDefaultSize = 65536;
@@ -89,29 +49,29 @@ struct zstream {
         : buffer_(size) {}
 
     ~zstream() {
-        // Remove writer handle and wait for readers to disconnect.
-        wrclose();
+        // // Remove writer handle and wait for readers to disconnect.
+        // wrclose();
 
-        auto no_readers = [this]() {
-            DEBUG(readers_.Mutex().AssertReaderHeld());
-            return readers_.num_offsets() == 0;
-        };
+        // auto no_readers = [this]() {
+        //     DEBUG(readers_.Mutex().AssertReaderHeld());
+        //     return readers_.num_offsets() == 0;
+        // };
 
-        readers_.Mutex().WriterLock();
-        readers_.Mutex().Await(absl::Condition(&no_readers));
-        readers_.Mutex().WriterUnlock();
+        // readers_.Mutex().WriterLock();
+        // readers_.Mutex().Await(absl::Condition(&no_readers));
+        // readers_.Mutex().WriterUnlock();
     }
 
     // Returns current size of buffer, in bytes.
-    ssize_t size() const LOCKS_EXCLUDED(lock_) {
+    ssize_t size() const LOCKS_EXCLUDED(buffer_lock_) {
         DCHECK(!failed());
-        ReaderMutexLock lock(&lock_);
+        ReaderMutexLock lock(&buffer_lock_);
         return buffer_.size();
     }
 
     // Returns true if the zcbuffer has failed to map memory somehow.
-    bool failed() const LOCKS_EXCLUDED(lock_) {
-        ReaderMutexLock lock(&lock_);
+    bool failed() const LOCKS_EXCLUDED(buffer_lock_) {
+        ReaderMutexLock lock(&buffer_lock_);
         return buffer_.data() == nullptr;
     }
 
@@ -121,21 +81,17 @@ struct zstream {
     }
 
     // Adds a reader to the buffer and returns an integer identifying it.
-    int add_reader() {
-        return readers_.add_offset();
-    }
+    int add_reader() LOCKS_EXCLUDED(reader_lock_);
 
     // Removes a given reader from the buffer.  Noop if no such reader exists.
-    void del_reader(int id) {
-        readers_.del_offset(id);
-    }
+    void del_reader(int id) LOCKS_EXCLUDED(reader_lock_);
 
     // Ensures that the buffer is large enough that it can accommodate borrowing
     // memory of at least the given size bytes.  The buffer size is never shrunk
     // so this may be a noop if it is already large enough.
     //
     // Returns true on success, false if the buffer couldn't be resized.
-    bool resize(ssize_t nbytes) LOCKS_EXCLUDED(lock_, readers_.Mutex());
+    bool resize(ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
 
     // Writes bytes to the stream.  If not enough space is available
     // immediately, blocks until all the data is written.  If all the readers
@@ -143,7 +99,7 @@ struct zstream {
     // may be written.
     //
     // Returns number of bytes actually written (-1 on error).
-    ssize_t write(const void* ptr, ssize_t nbytes) LOCKS_EXCLUDED(lock_, readers_.Mutex());
+    ssize_t write(const void* ptr, ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
 
     // Reads a given number of bytes from the buffer using the given reader
     // offset.  Blocks until all data requested is read, unless the writer
@@ -160,7 +116,7 @@ struct zstream {
     //   performing overlapping reads.  When greater, disjoint read.s
     //
     // Returns the number of bytes actually read.
-    ssize_t read(int id, void* ptr, ssize_t nbytes, ssize_t ncons=-1) LOCKS_EXCLUDED(lock_, readers_.Mutex());
+    ssize_t read(int id, void* ptr, ssize_t nbytes, ssize_t ncons=-1) LOCKS_EXCLUDED(buffer_lock_);
 
 private:
     // A memory-mapped pointer and size that can unmap itself.
@@ -245,68 +201,34 @@ private:
         std::atomic<int64_t> value_;
     };
 
-    // A set of 64-bit offsets that can be updated from multiple threads.
-    //
-    // Individual offsets may be updated under a reader lock, but if we have to
-    // recompute the minimum offset, an exclusive lock is obtained to prevent
-    // further updates while the new value is computed.
-    //
-    // The current minimum can be read via min_offset() which doesn't take out a
-    // lock, it instead uses an atomic to provide a memory fence so that partial
-    // updates are never seen.
-    //
-    // The lock we use to synchronize access for writing the minimum offset can
-    // also be used to wait for more data to come in.  await_bytes() will take
-    // out the lock and Await on it until the minimum offsets moves far enough
-    // forward.  We use conditional critical sections for this which should be
-    // more efficient than a condition variable.
-    struct ConcurrentPositionSet {
-        // Adds a new offset to the position set, set to the current minimum.
-        //
-        // Returns an integer identifier for the new offset.
-        int add_offset() LOCKS_EXCLUDED(Mutex());
+    // An individual offset in the stream.  These are aligned and sized to fit
+    // on a single cache line so that we can write to them without false sharing
+    // between threads.
+    struct Offset : AtomicInt64 {
+        using AtomicInt64::AtomicInt64;
 
-        // Remove the given offset from the position set.
-        void del_offset(int id) LOCKS_EXCLUDED(Mutex());
-
-        // Increments the given offset by some number of bytes.
-        void inc_offset(int id, int nbytes) LOCKS_EXCLUDED(Mutex());
-
-        ssize_t num_offsets() const SHARED_LOCKS_REQUIRED(Mutex()) {
-            return offsets_.size();
+        Offset& operator=(int64_t value) {
+            AtomicInt64::operator=(value);
+            return *this;
         }
-
-        // Returns the current value of the given offset.
-        std::optional<int64_t> get_offset(int) const LOCKS_EXCLUDED(Mutex());
-
-        // Waits for a given number of bytes to become available.
-        //
-        // Returns true if the bytes became available or false if all offsets
-        // we were tracking were removed.
-        bool await_bytes(ssize_t nbytes) const SHARED_LOCKS_REQUIRED(Mutex());
-
-        // Returns the current minimum offset value.
-        int64_t min_offset() const { return min_offset_; }
-
-        absl::Mutex& Mutex() const LOCK_RETURNED(lock_) { return lock_; }
-
-    private:
-        void update_min_offset() EXCLUSIVE_LOCKS_REQUIRED(Mutex());
-
-        mutable absl::Mutex lock_;
-        GUARDED_BY(Mutex()) absl::flat_hash_map<int, AtomicInt64> offsets_;
-        GUARDED_BY(Mutex()) int oneup_cnt_ = 0;
-
-        AtomicInt64 min_offset_ = 0;
     };
 
-    mutable absl::Mutex lock_ ACQUIRED_BEFORE(readers_.Mutex());
-    mutable GUARDED_BY(lock_) MappedBuffer buffer_;
-    ConcurrentPositionSet readers_;
+    mutable absl::Mutex buffer_lock_;
+    mutable absl::Mutex writer_lock_;
+    mutable absl::Mutex reader_lock_;
+    mutable absl::Mutex min_rdoff_lock_;
 
-    mutable absl::Mutex wroff_lock_ ACQUIRED_AFTER(lock_);
-    AtomicInt64 wroffset_ = 0;
+    GUARDED_BY(buffer_lock_) MappedBuffer buffer_;
+    GUARDED_BY(reader_lock_) absl::flat_hash_map<int, Offset> readers_;
+    GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
+
+    Offset wroffset_ = 0;
+    Offset min_read_offset_ = 0;
     std::atomic<bool> wropen_ = true;
+
+    void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_, min_rdoff_lock_);
+
+    // void set_minrdoff(int64_t offset) LOCKS_EXCLUDED(min_rdoff_lock_);
 
     bool wropen() const {
         return wropen_.load(std::memory_order_acquire);
@@ -315,20 +237,21 @@ private:
     void wroff_advance(int64_t val) {
         // Note we don't need an atomic fetch_add here, all that matters is that
         // other threads see the new offset, not that it updated atomically.
-        WriterMutexLock lock(&wroff_lock_);
+        WriterMutexLock lock(&writer_lock_);
         wroffset_ = wroffset_ + val;
     }
 
     // Returns the current space in bytes available for writing.
-    int64_t wravail() const SHARED_LOCKS_REQUIRED(lock_) {
-        return buffer_.size() - (wroffset_ - readers_.min_offset());
+    int64_t wravail() const SHARED_LOCKS_REQUIRED(buffer_lock_) {
+        //        DEBUG(fprintf(stderr, "[w] offset: %zd  min_offset: %zd\n", (int64_t)wroffset_, readers_.min_offset()));
+        return buffer_.size() - (wroffset_ - min_read_offset_);
     }
 
     // Wait for the given number of bytes to become available for writing.  If
     // all the readers are removed before space becomes available, returns -1.
-    ssize_t write_wait(ssize_t min_bytes) SHARED_LOCKS_REQUIRED(lock_);
+    ssize_t write_wait(ssize_t min_bytes) SHARED_LOCKS_REQUIRED(buffer_lock_);
 
     // Wait for the given number of bytes to become available for reading.  If
     // the writer is closed before space becomes available, returns -1.
-    ssize_t read_wait(int64_t offset, ssize_t min_bytes) LOCKS_EXCLUDED(wroff_lock_);
+    ssize_t read_wait(int64_t offset, ssize_t min_bytes) LOCKS_EXCLUDED(writer_lock_);
 };

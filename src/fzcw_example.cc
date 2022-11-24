@@ -31,10 +31,11 @@ struct TestWriter {
     ssize_t operator()() {
         std::vector<char> data(32768);
 
-        DEBUG(fprintf(stderr, "[w] writing %zd bytes\n", nsamp_));
+        DEBUG(fprintf(stderr, "[w] writing %zd bytes total\n", nsamp_));
         ssize_t remain = nsamp_;
         while (remain) {
             ssize_t nwrite = std::min(remain, (ssize_t)data.size());
+            DEBUG(fprintf(stderr, "[w] writing %zd bytes now\n", nwrite));
             remain -= stream_->write(data.data(), nwrite);
             DEBUG(fprintf(stderr, "\r[w]  %zd remain", remain));
         }
@@ -56,8 +57,10 @@ struct TestReader {
         std::vector<char> data(32768);
 
         ssize_t remain = nsamp_;
+        DEBUG(fprintf(stderr, "[r] reading %zd bytes total\n", nsamp_));
         while (remain) {
             ssize_t size = std::min(remain, (ssize_t)data.size());
+            DEBUG(fprintf(stderr, "[r] reading %zd bytes now\n", size));
             ssize_t nread = stream_->read(id_, data.data(), size, size);
             if (nread < 0) {
                 break;
