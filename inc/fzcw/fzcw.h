@@ -8,10 +8,11 @@
 #include <memory>
 #include <optional>
 
-// abseil
-#include <spdlog/spdlog.h>
+// third party libraries
+#include <absl/base/optimization.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
+#include <spdlog/spdlog.h>
 
 // linux
 #include <signal.h>
@@ -179,7 +180,8 @@ private:
     // An atomic integer that's movable so it can be used in containers.  This
     // wraps a std::atomic<int64_t> and allows accessing it with acquire/release
     // semantics by default, to avoid having to specify memory ordering
-    // everywhere.
+    // everywhere.  This is aligned and padded so that each one will take up
+    // one cacheline to avoid destructive sharing.
     //
     // X86 has acquire/release semantics natively so this has no overhead there.
     struct AtomicInt64 {
@@ -311,15 +313,15 @@ private:
         GUARDED_BY(lock_) AtomicInt64 value_;
     };
 
-    mutable absl::Mutex buffer_lock_;
+    ABSL_CACHELINE_ALIGNED mutable absl::Mutex buffer_lock_;
     mutable absl::Mutex reader_lock_;
+    Offset wroffset_ = 0;
+    Offset min_read_offset_ = 0;
 
     GUARDED_BY(buffer_lock_) MappedBuffer buffer_;
     GUARDED_BY(reader_lock_) absl::flat_hash_map<int, AtomicInt64> readers_;
     GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
 
-    Offset wroffset_ = 0;
-    Offset min_read_offset_ = 0;
     std::atomic<bool> wropen_ = true;
     std::atomic<double> spin_limit_ = kDefaultSpinLimit;
 

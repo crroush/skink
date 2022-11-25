@@ -82,9 +82,8 @@ static inline void benchmark() {
     //     4096, 8192, 16384, 32768, 65536, 131072, 262144,
     //     524288, 1048576, 2097152, 4194304, 8388608
     // };
-
     constexpr ssize_t buffer_sizes[] = {
-        65536
+        4096
     };
 
     //constexpr ssize_t  num_readers[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -96,22 +95,24 @@ static inline void benchmark() {
     printf("# bufsize  act_size  nreader  bytes/second-write  bytes/second-read  passed\n");
     for (ssize_t bufsize : buffer_sizes) {
         bool passed;
-        double tstart = stopwatch();
         for (ssize_t nreader : num_readers) {
+            //for (double spin_time : spin_times) {
             zstream *stream = new zstream(bufsize);
+            //stream->set_spin_limit(spin_time);
 
-            printf("%7zd buffer, %zd readers\n", bufsize, nreader);
+            fprintf(stderr, "%7zd buffer, %zd readers\n", bufsize, nreader);
 
             // Create readers.
+            double tstart = stopwatch();
             std::vector<std::future<ssize_t>> results;
             for (ssize_t ii=0; ii < nreader; ii++) {
                 results.emplace_back( \
-                    std::async(TestReader(stream->add_reader(), *stream, nbyte)));
+                    std::async(std::launch::async, TestReader(stream->add_reader(), *stream, nbyte)));
             }
 
             // Create writers.
             std::future<ssize_t> resultw = \
-                std::async(TestWriter(*stream, nbyte));
+                std::async(std::launch::async, TestWriter(*stream, nbyte));
 
             passed = true;
             for (ssize_t ii=0; ii < nreader; ii++) {
@@ -122,6 +123,7 @@ static inline void benchmark() {
             printf("%8zd %8zd %zd %.9e %.9e %d\n", bufsize, stream->size(), nreader, nbyte/telapsed, nreader*nbyte/telapsed, passed);
             fflush(stdout);
         }
+        //}
     }
 }
 

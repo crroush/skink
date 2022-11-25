@@ -295,7 +295,7 @@ void zstream::inc_reader(int id, int64_t nbytes) {
     }
 
     // Increment the reader offset.
-    int64_t offset = iter->second;
+    int64_t offset = iter->second.value();
     iter->second = offset + nbytes;
 
     // If our old offset matches the minimum offset we might have been the
