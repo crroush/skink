@@ -32,6 +32,7 @@ void zstream::MappedBuffer::map(ssize_t size) {
         close(fd);
         return;
     }
+    madvise(ptr, 2*size, MADV_WILLNEED);
 
     // Resize anonymous file to match size requested.
     if (ftruncate(fd, size) < 0) {
@@ -140,7 +141,7 @@ ssize_t zstream::await_write_space(ssize_t min_bytes) {
         return navail;
     }
 
-    // Spin for up to 1ms before falling back to mutex.
+    // Spin briefly before falling back to mutex.
     double start = stopwatch();
     do {
         // Throttle how often we hit clock_gettime since it has to call out to
@@ -227,7 +228,7 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
         return navail;
     }
 
-    // Spin for up to 1ms before falling back to mutex.
+    // Spin briefly before falling back to mutex.
     double start = stopwatch();
     do {
         // Throttle how often we hit clock_gettime since it has to call out to

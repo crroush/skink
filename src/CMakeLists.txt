@@ -7,7 +7,6 @@ target_link_libraries(
   absl::flat_hash_map
 )
 
-
 # For address sanitization: TODO make optional
 #target_compile_options(test_flowgraph PRIVATE -fsanitize=address)
 #target_link_options(test_flowgraph PRIVATE -fsanitize=address)

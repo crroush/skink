@@ -78,17 +78,17 @@ private:
 
 
 static inline void benchmark() {
-    // constexpr ssize_t buffer_sizes[] = {
-    //     4096, 8192, 16384, 32768, 65536, 131072, 262144,
-    //     524288, 1048576, 2097152, 4194304, 8388608
-    // };
     constexpr ssize_t buffer_sizes[] = {
-        4096
+        4096, 8192, 16384, 32768, 65536, 131072, 262144,
+        524288, 1048576, 2097152, 4194304, 8388608
     };
+    // constexpr ssize_t buffer_sizes[] = {
+    //     65536
+    // };
 
-    //constexpr ssize_t  num_readers[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    constexpr ssize_t  num_readers[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     //constexpr ssize_t  num_readers[] = { 1, 2 };
-    constexpr ssize_t  num_readers[] = { 4 };
+    //constexpr ssize_t  num_readers[] = { 4 };
 
     constexpr ssize_t nbyte = 1ull << 34; // 16GB
 
@@ -100,7 +100,7 @@ static inline void benchmark() {
             zstream *stream = new zstream(bufsize);
             //stream->set_spin_limit(spin_time);
 
-            fprintf(stderr, "%7zd buffer, %zd readers\n", bufsize, nreader);
+            //fprintf(stderr, "%7zd buffer, %zd readers\n", bufsize, nreader);
 
             // Create readers.
             double tstart = stopwatch();
