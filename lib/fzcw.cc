@@ -32,7 +32,6 @@ void zstream::MappedBuffer::map(ssize_t size) {
         close(fd);
         return;
     }
-    //    madvise(ptr, 2*size, MADV_WILLNEED);
 
     // Resize anonymous file to match size requested.
     if (ftruncate(fd, size) < 0) {
@@ -79,7 +78,7 @@ bool zstream::resize(ssize_t nbytes) {
     }
 
     // Take out an exclusive lock on the buffer to resize it.
-    WriterMutexLock lock(&buffer_lock_);
+    absl::WriterMutexLock lock(&buffer_lock_);
 
     // Steal the old mapped buffer, its destructor will unmap it.
     MappedBuffer old_buffer = std::move(buffer_);
@@ -179,10 +178,10 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
         resize(2*(nbytes-ncons));
     }
 
-    ReaderMutexLock lock(&buffer_lock_);
+    absl::ReaderMutexLock lock(&buffer_lock_);
     int64_t offset;
     {
-        ReaderMutexLock lock(&reader_lock_);
+        absl::ReaderMutexLock lock(&reader_lock_);
         auto iter = readers_.find(id);
         if (iter == readers_.end()) {
             return -1;
@@ -253,13 +252,13 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
 }
 
 int zstream::add_reader() {
-    WriterMutexLock lock(&reader_lock_);
+    absl::WriterMutexLock lock(&reader_lock_);
     readers_.emplace(reader_oneup_, static_cast<int64_t>(min_read_offset_));
     return reader_oneup_++;
 }
 
 void zstream::del_reader(int id) {
-    WriterMutexLock lock(&reader_lock_);
+    absl::WriterMutexLock lock(&reader_lock_);
 
     auto iter = readers_.find(id);
     if (iter == readers_.end()) {
@@ -279,7 +278,7 @@ void zstream::del_reader(int id) {
 }
 
 void zstream::inc_reader(int id, int64_t nbytes) {
-    ReaderMutexLock lock(&reader_lock_);
+    absl::ReaderMutexLock lock(&reader_lock_);
 
     auto iter = readers_.find(id);
     if (iter == readers_.end()) {

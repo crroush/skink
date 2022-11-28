@@ -33,9 +33,6 @@
 #define DCHECK(condition)
 #endif
 
-using absl::WriterMutexLock;
-using absl::ReaderMutexLock;
-
 // Get page size once at process start.
 static const int FZCW_PAGE_SIZE = getpagesize();
 
@@ -67,13 +64,13 @@ struct zstream {
     // Returns current size of buffer, in bytes.
     ssize_t size() const LOCKS_EXCLUDED(buffer_lock_) {
         DCHECK(!failed());
-        ReaderMutexLock lock(&buffer_lock_);
+        absl::ReaderMutexLock lock(&buffer_lock_);
         return buffer_.size();
     }
 
     // Returns true if the zcbuffer has failed to map memory somehow.
     bool failed() const LOCKS_EXCLUDED(buffer_lock_) {
-        ReaderMutexLock lock(&buffer_lock_);
+        absl::ReaderMutexLock lock(&buffer_lock_);
         return buffer_.data() == nullptr;
     }
 
@@ -237,6 +234,11 @@ private:
             return value_;
         }
 
+        // Returns true if the offset has been shutdown.
+        bool closed() const {
+            return value() == kClosed;
+        }
+
         // Set the underlying value atomicly.  Requires that the lock is held.
         void set_atomic(int64_t value) EXCLUSIVE_LOCKS_REQUIRED(lock_) {
             value_ = value;
@@ -247,13 +249,13 @@ private:
         }
 
         Offset& operator=(int64_t value) LOCKS_EXCLUDED(lock_) {
-            WriterMutexLock lock(&lock_);
+            absl::WriterMutexLock lock(&lock_);
             value_ = value;
             return *this;
         }
 
         Offset& operator+=(int64_t val) LOCKS_EXCLUDED(lock_) {
-            WriterMutexLock lock(&lock_);
+            absl::WriterMutexLock lock(&lock_);
             value_ = value_ + val;
             return *this;
         }
@@ -314,7 +316,7 @@ private:
     };
 
     ABSL_CACHELINE_ALIGNED mutable absl::Mutex buffer_lock_;
-    mutable absl::Mutex reader_lock_;
+    ABSL_CACHELINE_ALIGNED mutable absl::Mutex reader_lock_;
     ABSL_CACHELINE_ALIGNED Offset wroffset_ = 0;
     ABSL_CACHELINE_ALIGNED Offset min_read_offset_ = 0;
 

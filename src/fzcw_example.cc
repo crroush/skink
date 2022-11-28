@@ -31,15 +31,11 @@ struct TestWriter {
     ssize_t operator()() {
         std::vector<char> data(32768);
 
-        DEBUG(fprintf(stderr, "[w] writing %zd bytes total\n", nsamp_));
         ssize_t remain = nsamp_;
         while (remain) {
             ssize_t nwrite = std::min(remain, (ssize_t)data.size());
-            DEBUG(fprintf(stderr, "[w] writing %zd bytes now\n", nwrite));
             remain -= stream_->write(data.data(), nwrite);
-            DEBUG(fprintf(stderr, "\r[w]  %zd remain", remain));
         }
-        DEBUG(fprintf(stderr, "\n[w] done\n"));
 
         return nsamp_ - remain;
     }
@@ -57,10 +53,8 @@ struct TestReader {
         std::vector<char> data(32768);
 
         ssize_t remain = nsamp_;
-        DEBUG(fprintf(stderr, "[r] reading %zd bytes total\n", nsamp_));
         while (remain) {
             ssize_t size = std::min(remain, (ssize_t)data.size());
-            DEBUG(fprintf(stderr, "[r] reading %zd bytes now\n", size));
             ssize_t nread = stream_->read(id_, data.data(), size, size);
             if (nread < 0) {
                 break;
@@ -78,29 +72,14 @@ private:
 
 
 static inline void benchmark() {
-    constexpr ssize_t buffer_sizes[] = {
-        4096, 8192, 16384, 32768, 65536, 131072, 262144,
-        524288, 1048576, 2097152, 4194304, 8388608
-    };
-    // constexpr ssize_t buffer_sizes[] = {
-    //     65536
-    // };
-
-    constexpr ssize_t  num_readers[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    //constexpr ssize_t  num_readers[] = { 1, 2 };
-    //constexpr ssize_t  num_readers[] = { 4 };
-
     constexpr ssize_t nbyte = 1ull << 34; // 16GB
 
     printf("# bufsize  act_size  nreader  bytes/second-write  bytes/second-read  passed\n");
-    for (ssize_t bufsize : buffer_sizes) {
+    for (int i=12; i <= 23; ++i) {
+        const ssize_t bufsize = 1ull << i;
         bool passed;
-        for (ssize_t nreader : num_readers) {
-            //for (double spin_time : spin_times) {
+        for (ssize_t nreader = 1; nreader <= 8; ++nreader) {
             zstream *stream = new zstream(bufsize);
-            //stream->set_spin_limit(spin_time);
-
-            //fprintf(stderr, "%7zd buffer, %zd readers\n", bufsize, nreader);
 
             // Create readers.
             double tstart = stopwatch();
@@ -123,13 +102,11 @@ static inline void benchmark() {
             printf("%8zd %8zd %zd %.9e %.9e %d\n", bufsize, stream->size(), nreader, nbyte/telapsed, nreader*nbyte/telapsed, passed);
             fflush(stdout);
         }
-        //}
     }
 }
 
 int main(int argc, char* argv[]){
     CLI::App app{"Simple FCZW"};
     CLI11_PARSE(app, argc, argv);
-    spdlog::info( "Initialized" );
     benchmark();
 }
