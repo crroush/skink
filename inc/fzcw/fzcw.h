@@ -315,8 +315,8 @@ private:
 
     ABSL_CACHELINE_ALIGNED mutable absl::Mutex buffer_lock_;
     mutable absl::Mutex reader_lock_;
-    Offset wroffset_ = 0;
-    Offset min_read_offset_ = 0;
+    ABSL_CACHELINE_ALIGNED Offset wroffset_ = 0;
+    ABSL_CACHELINE_ALIGNED Offset min_read_offset_ = 0;
 
     GUARDED_BY(buffer_lock_) MappedBuffer buffer_;
     GUARDED_BY(reader_lock_) absl::flat_hash_map<int, AtomicInt64> readers_;

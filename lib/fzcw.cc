@@ -32,7 +32,7 @@ void zstream::MappedBuffer::map(ssize_t size) {
         close(fd);
         return;
     }
-    madvise(ptr, 2*size, MADV_WILLNEED);
+    //    madvise(ptr, 2*size, MADV_WILLNEED);
 
     // Resize anonymous file to match size requested.
     if (ftruncate(fd, size) < 0) {
@@ -141,21 +141,16 @@ ssize_t zstream::await_write_space(ssize_t min_bytes) {
         return navail;
     }
 
-    // Spin briefly before falling back to mutex.
     double start = stopwatch();
+    double limit = spin_limit_.load(std::memory_order_acquire);
     do {
         // Throttle how often we hit clock_gettime since it has to call out to
         // to the VDSO.  The empty asm() call here provides a compiler barrier
         // so that this loop isn't optimized out.
-        for (int i=0; i < 1000; i++) {
-            asm("");
+        for (int i=0; i < 1000 && navail < min_bytes; i++) {
+            navail = wravail();
         }
-
-        navail = wravail();
-        if (navail >= min_bytes) {
-            return navail;
-        }
-    } while (stopwatch(start) < spin_limit_.load(std::memory_order_acquire));
+    } while (navail < min_bytes && stopwatch(start) < limit);
 
     // Finally fall back to using the mutex to sleep.
     int64_t wroffset = wroffset_;
@@ -230,19 +225,15 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
 
     // Spin briefly before falling back to mutex.
     double start = stopwatch();
+    double limit = spin_limit_.load(std::memory_order_acquire);
     do {
         // Throttle how often we hit clock_gettime since it has to call out to
         // to the VDSO.  The empty asm() call here provides a compiler barrier
         // so that this loop isn't optimized out.
-        for (int i=0; i < 1000; i++) {
-            asm("");
+        for (int i=0; i < 1000 && navail < min_bytes; i++) {
+            navail = rdavail(offset);
         }
-
-        navail = rdavail(offset);
-        if (navail >= min_bytes) {
-            return navail;
-        }
-    } while (stopwatch(start) < spin_limit_.load(std::memory_order_acquire));
+    } while (navail < min_bytes && stopwatch(start) < limit);
 
     // Finally fall back to using the mutex to wait.
     navail = rdavail(offset);
