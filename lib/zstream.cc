@@ -194,7 +194,7 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
     ssize_t remain   = nbytes;
     while (remain) {
         ssize_t navail = await_data(offset, 1);
-        if (navail < 0) {
+        if (navail <= 0) {
             break;
         }
 
@@ -228,17 +228,46 @@ bool zstream::skip(int id, ssize_t nbytes) {
     return true;
 }
 
+sizeptr<const void> zstream::rborrow(int id, ssize_t size) {
+    // Make sure the buffer is large enough to service the borrow.
+    DCHECK(size > 0);
+    resize(2*size);
+
+    buffer_lock_.ReaderLock();
+    int64_t offset;
+    {
+        absl::ReaderMutexLock lock(&reader_lock_);
+        auto iter = readers_.find(id);
+        if (iter == readers_.end()) {
+            return {};
+        }
+        offset = iter->second.value();
+    }
+
+    ssize_t navail = await_data(offset, size);
+    if (navail < size) {
+        // Not enough data, report what we could borrow.
+        buffer_lock_.ReaderUnlock();
+        return {nullptr, navail};
+    }
+
+    // Note: Do not release lock.
+    return {buffer_.data(offset), size};
+}
+
+
+void zstream::rrelease(int id, ssize_t size) {
+    DCHECK(buffer_lock_.AssertReaderHeld());
+    buffer_lock_.ReaderUnlock();
+    skip(id, size);
+}
+
 
 ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
     // See if we have data available already.
     ssize_t navail = rdavail(offset);
-    if (navail >= min_bytes) {
+    if (navail >= min_bytes || wrclosed()) {
         return navail;
-    }
-
-    // If writer has closed, then no more data is coming ever.
-    if (!wropen()) {
-        return -1;
     }
 
     // Spin briefly before falling back to mutex.
@@ -254,11 +283,6 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
         buffer_lock_.ReaderUnlock();
         navail = wroffset_.AwaitGe(min_offset) - offset;
         buffer_lock_.ReaderLock();
-
-        // If we woke back up because the writer closed, return error.
-        if (!wropen()) {
-            return -1;
-        }
     }
     return navail;
 }

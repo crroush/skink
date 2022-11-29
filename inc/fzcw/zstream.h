@@ -111,6 +111,13 @@ struct zstream {
     // Returns false if no such reader exists.
     bool skip(int id, ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
 
+    // Borrow memory for reading from the current offset of the reader.
+    sizeptr<const void> rborrow(int id, ssize_t size) LOCKS_EXCLUDED(buffer_lock_);
+
+    // Release memory borrowed with rborrow back to the buffer, advances the
+    // read offset by the given size and releases locks.
+    void rrelease(int id, ssize_t size) SHARED_LOCKS_REQUIRED(buffer_lock_);
+
 private:
     // A memory-mapped pointer and size that can unmap itself.
     struct MappedBuffer {
@@ -202,9 +209,6 @@ private:
     // locking.  We can check the value first without the mutex, then if needed,
     // take out the mutex, check it again and proceed.
     struct Offset {
-        // Sentinel value indicating this offset has been shut down.
-        static constexpr int64_t kClosed = -1;
-
         Offset(int64_t value=0)
             : value_(value) {}
 
@@ -222,12 +226,12 @@ private:
         // Mark the offset as closed, no further updates are allowed.
         void close() LOCKS_EXCLUDED(lock_) {
             absl::WriterMutexLock lock(&lock_);
-            set_atomic(kClosed);
+            closed_.store(true, std::memory_order_release);
         }
 
         // Returns true if the offset has been shutdown.
-        bool closed() const {
-            return value() == kClosed;
+        bool closed() const NO_THREAD_SAFETY_ANALYSIS {
+            return closed_.load(std::memory_order_acquire);
         }
 
         // Set the underlying value atomicly.  Requires that the lock is held.
@@ -276,7 +280,7 @@ private:
         // Returns the current value which is always >= v or kClosed.
         int64_t AwaitGe(int64_t v) const LOCKS_EXCLUDED(lock_) {
             int64_t curval = value();
-            if (curval >= v || curval == kClosed) {
+            if (curval >= v || closed()) {
                 return curval;
             }
 
@@ -285,7 +289,7 @@ private:
             if (curval < v) {
                 const auto ready = [this, v]() {
                     DEBUG(lock_.AssertReaderHeld());
-                    return value_ >= v || value_ == kClosed;
+                    return value_ >= v || closed_;
                 };
                 lock_.Await(absl::Condition(&ready));
                 curval = value_;
@@ -305,6 +309,7 @@ private:
     private:
         mutable absl::Mutex lock_;
         GUARDED_BY(lock_) AtomicInt64 value_;
+        GUARDED_BY(lock_) std::atomic<bool> closed_ = false;
     };
 
     ABSL_CACHELINE_ALIGNED mutable absl::Mutex buffer_lock_;
@@ -317,8 +322,8 @@ private:
     GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
 
     // Returns true if the stream is open for writing.
-    bool wropen() {
-        return !wroffset_.closed();
+    bool wrclosed() {
+        return wroffset_.closed();
     }
 
     // Increment a read offset in-place.
@@ -339,6 +344,7 @@ private:
     ssize_t await_write_space(ssize_t min_bytes) SHARED_LOCKS_REQUIRED(buffer_lock_);
 
     // Wait for the given number of bytes to become available for reading.  If
-    // the writer is closed before space becomes available, returns -1.
+    // the writer is closed before all the space becomes available, may return a
+    // short count.
     ssize_t await_data(int64_t offset, ssize_t min_bytes) SHARED_LOCKS_REQUIRED(buffer_lock_);
 };
