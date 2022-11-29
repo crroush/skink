@@ -98,8 +98,11 @@ bool zstream::resize(ssize_t nbytes) {
         ssize_t new_size = new_buffer.size();
         ssize_t old_size = old_buffer.size();
 
-        void* dst = new_buffer.data() + (wroffset - old_size) % new_size;
-        void* src = old_buffer.data() + (wroffset - old_size) % old_size;
+        int ncopy = wroffset_ - min_read_offset_;
+        DCHECK(ncopy <= wroffset_);
+
+        void* dst = new_buffer.data() + (wroffset - ncopy) % new_size;
+        void* src = old_buffer.data() + (wroffset - ncopy) % old_size;
         memcpy(dst, src, old_size);
     }
 
@@ -112,7 +115,7 @@ bool zstream::resize(ssize_t nbytes) {
 }
 
 ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
-    buffer_lock_.ReaderLock();
+    absl::ReaderMutexLock lock(&buffer_lock_);
 
     // Cast to char pointer so we can do arithmetic.
     const char* cptr = static_cast<const char*>(ptr);
@@ -132,7 +135,6 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
         // that more data is available.
         wroffset_ += nwrite;
     }
-    buffer_lock_.ReaderUnlock();
     return nbytes-remain;
 }
 

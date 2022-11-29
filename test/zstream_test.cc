@@ -1,4 +1,4 @@
-#include <fzcw/fzcw.h>
+#include <fzcw/zstream.h>
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>

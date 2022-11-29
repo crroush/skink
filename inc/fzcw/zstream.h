@@ -8,6 +8,8 @@
 #include <memory>
 #include <optional>
 
+#include <fzcw/sizeptr.h>
+
 // third party libraries
 #include <absl/base/optimization.h>
 #include <absl/container/flat_hash_map.h>
@@ -79,17 +81,16 @@ struct zstream {
     // Returns true on success, false if the buffer couldn't be resized.
     bool resize(ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
 
-    // Writes bytes to the stream.  If not enough space is available
-    // immediately, blocks until all the data is written.  If all the readers
-    // are removed before finishing the write, then less data than requested
-    // may be written.
+    // Writes bytes to the stream.  If not enough space is available, blocks
+    // until all the data is written.  If all the readers are removed before
+    // finishing the write, then less data than requested may be written.
     //
     // Returns number of bytes actually written (-1 on error).
     ssize_t write(const void* ptr, ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
 
     // Reads a given number of bytes from the buffer using the given reader
-    // offset.  Blocks until all data requested is read, unless the writer
-    // is closed, in which case returns early.
+    // offset.  Blocks until all data requested is read, unless the writer is
+    // closed, in which case returns early.
     //
     // id     - The identifier for the reader.  If no such reader, returns -1.
     // ptr    - Pointer to memory to read into.
