@@ -103,7 +103,13 @@ struct zstream {
     //   performing overlapping reads.  When greater, disjoint read.s
     //
     // Returns the number of bytes actually read.
-    ssize_t read(int id, void* ptr, ssize_t nbytes, ssize_t ncons=-1) LOCKS_EXCLUDED(buffer_lock_);
+    ssize_t read(int id, void* ptr, ssize_t nbytes, ssize_t ncons=-1) LOCKS_EXCLUDED(buffer_lock_, reader_lock_);
+
+    // Skip the given number of bytes for the given reader.  The read offset is
+    // moved forward and the data is no longer accessible to this reader.
+    //
+    // Returns false if no such reader exists.
+    bool skip(int id, ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
 
 private:
     // A memory-mapped pointer and size that can unmap itself.
@@ -315,7 +321,8 @@ private:
         return !wroffset_.closed();
     }
 
-    void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_);
+    // Increment a read offset in-place.
+    void inc_reader(AtomicInt64& reader, int64_t nbytes);
 
     // Return current space in bytes available for writing.
     int64_t wravail() const SHARED_LOCKS_REQUIRED(buffer_lock_) {
