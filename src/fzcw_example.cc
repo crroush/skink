@@ -1,4 +1,4 @@
-#include <fzcw/fzcw.h>
+#include <fzcw/zstream.h>
 
 #include <algorithm>
 #include <future>

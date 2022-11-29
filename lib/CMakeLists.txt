@@ -1,4 +1,4 @@
-add_library(libfzcw STATIC fzcw.cc)
+add_library(libfzcw STATIC zstream.cc)
 target_include_directories(libfzcw PUBLIC ${PROJECT_SOURCE_DIR}/inc)
 
 # Stop cmake from prepending lib to the name
