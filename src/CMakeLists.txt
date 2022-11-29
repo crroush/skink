@@ -1,6 +1,6 @@
-add_executable(fzcw-example fzcw_example.cc)
+add_executable(zstream-bench zstream_bench.cc)
 target_link_libraries(
-  fzcw-example
+  zstream-bench
   libfzcw
   spdlog
   CLI11
