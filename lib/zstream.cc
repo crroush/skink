@@ -6,20 +6,23 @@
 
 #include <limits>
 
-// Return current wall clock time, in seconds.
-inline double stopwatch() {
-    struct timespec tv;
-    clock_gettime(CLOCK_MONOTONIC, &tv);
-    return tv.tv_sec + (double)tv.tv_nsec/1e9;
-}
+zstream::~zstream() {
+    // Close write end of the pipe.
+    wrclose();
 
-// Return time elapsed since a given start time, in seconds.
-inline double stopwatch(double start) {
-    return stopwatch()-start;
+    // Wait for readers to detach.
+    const auto no_readers = [this]() {
+        DEBUG(reader_lock_.AssertReaderHeld());
+        return readers_.empty();
+    };
+
+    reader_lock_.WriterLock();
+    reader_lock_.Await(absl::Condition(&no_readers));
+    reader_lock_.WriterUnlock();
 }
 
 void zstream::MappedBuffer::map(ssize_t size) {
-    SPDLOG_DEBUG(ptr_ == nullptr);
+    DCHECK(ptr_ == nullptr);
 
     int fd = memfd_create("zstream", 0);
     if (fd < 0) {
@@ -213,6 +216,11 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
     ssize_t navail = rdavail(offset);
     if (navail >= min_bytes) {
         return navail;
+    }
+
+    // If writer has closed, then no more data is coming ever.
+    if (!wropen()) {
+        return -1;
     }
 
     // Spin briefly before falling back to mutex.

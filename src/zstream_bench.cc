@@ -53,6 +53,7 @@ ssize_t reader(int id, zstream& stream, ssize_t nbyte) {
         }
         remain -= nread;
     }
+    stream.del_reader(id);
     return nbyte - remain;
 }
 
@@ -65,7 +66,7 @@ static inline void benchmark() {
         const ssize_t bufsize = 1ull << i;
         bool passed;
         for (ssize_t nreader = 1; nreader <= 8; ++nreader) {
-            zstream *stream = new zstream(bufsize);
+            zstream stream(bufsize);
 
             // Create readers.
             double tstart = stopwatch();
@@ -73,12 +74,12 @@ static inline void benchmark() {
             for (ssize_t ii=0; ii < nreader; ii++) {
                 results.emplace_back( \
                     std::async(std::launch::async, reader,
-                        stream->add_reader(), std::ref(*stream), nbyte));
+                        stream.add_reader(), std::ref(stream), nbyte));
             }
 
             // Create writers.
             std::future<ssize_t> resultw = \
-                std::async(std::launch::async, writer, std::ref(*stream), nbyte);
+                std::async(std::launch::async, writer, std::ref(stream), nbyte);
 
             passed = true;
             for (ssize_t ii=0; ii < nreader; ii++) {
@@ -87,7 +88,7 @@ static inline void benchmark() {
 
             double telapsed = stopwatch(tstart);
             printf("%8zd %8zd %zd %.9e %.9e %d\n",
-                bufsize, stream->size(), nreader,
+                bufsize, stream.size(), nreader,
                 nbyte/telapsed, nreader*nbyte/telapsed,
                 passed
             );

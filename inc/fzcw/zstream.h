@@ -46,19 +46,7 @@ struct zstream {
     zstream(size_t size=kDefaultSize)
         : buffer_(size) {}
 
-    ~zstream() {
-        // // Remove writer handle and wait for readers to disconnect.
-        // wrclose();
-
-        // auto no_readers = [this]() {
-        //     DEBUG(readers_.Mutex().AssertReaderHeld());
-        //     return readers_.num_offsets() == 0;
-        // };
-
-        // readers_.Mutex().WriterLock();
-        // readers_.Mutex().Await(absl::Condition(&no_readers));
-        // readers_.Mutex().WriterUnlock();
-    }
+    ~zstream();
 
     // Returns current size of buffer, in bytes.
     ssize_t size() const LOCKS_EXCLUDED(buffer_lock_) {
@@ -75,7 +63,7 @@ struct zstream {
 
     // Close the write end of the buffer, signaling no more data.
     void wrclose() {
-        wropen_.store(false, std::memory_order_release);
+        wroffset_.close();
     }
 
     // Adds a reader to the buffer and returns an integer identifying it.
@@ -224,6 +212,12 @@ private:
             return value_;
         }
 
+        // Mark the offset as closed, no further updates are allowed.
+        void close() LOCKS_EXCLUDED(lock_) {
+            absl::WriterMutexLock lock(&lock_);
+            set_atomic(kClosed);
+        }
+
         // Returns true if the offset has been shutdown.
         bool closed() const {
             return value() == kClosed;
@@ -245,6 +239,7 @@ private:
         }
 
         Offset& operator+=(int64_t val) LOCKS_EXCLUDED(lock_) {
+            DCHECK(!closed());
             absl::WriterMutexLock lock(&lock_);
             value_ = value_ + val;
             return *this;
@@ -274,7 +269,7 @@ private:
         // Returns the current value which is always >= v or kClosed.
         int64_t AwaitGe(int64_t v) const LOCKS_EXCLUDED(lock_) {
             int64_t curval = value();
-            if (curval >= v) {
+            if (curval >= v || curval == kClosed) {
                 return curval;
             }
 
@@ -314,13 +309,12 @@ private:
     GUARDED_BY(reader_lock_) absl::flat_hash_map<int, AtomicInt64> readers_;
     GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
 
-    std::atomic<bool> wropen_ = true;
+    // Returns true if the stream is open for writing.
+    bool wropen() {
+        return !wroffset_.closed();
+    }
 
     void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_);
-
-    bool wropen() const {
-        return wropen_.load(std::memory_order_acquire);
-    }
 
     // Return current space in bytes available for writing.
     int64_t wravail() const SHARED_LOCKS_REQUIRED(buffer_lock_) {
