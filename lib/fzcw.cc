@@ -140,16 +140,9 @@ ssize_t zstream::await_write_space(ssize_t min_bytes) {
         return navail;
     }
 
-    double start = stopwatch();
-    double limit = spin_limit_.load(std::memory_order_acquire);
-    do {
-        // Throttle how often we hit clock_gettime since it has to call out to
-        // to the VDSO.  The empty asm() call here provides a compiler barrier
-        // so that this loop isn't optimized out.
-        for (int i=0; i < 1000 && navail < min_bytes; i++) {
-            navail = wravail();
-        }
-    } while (navail < min_bytes && stopwatch(start) < limit);
+    for (int i=0; i < 8192 && navail < min_bytes; i++) {
+        navail = wravail();
+    }
 
     // Finally fall back to using the mutex to sleep.
     int64_t wroffset = wroffset_;
@@ -223,16 +216,9 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
     }
 
     // Spin briefly before falling back to mutex.
-    double start = stopwatch();
-    double limit = spin_limit_.load(std::memory_order_acquire);
-    do {
-        // Throttle how often we hit clock_gettime since it has to call out to
-        // to the VDSO.  The empty asm() call here provides a compiler barrier
-        // so that this loop isn't optimized out.
-        for (int i=0; i < 1000 && navail < min_bytes; i++) {
-            navail = rdavail(offset);
-        }
-    } while (navail < min_bytes && stopwatch(start) < limit);
+    for (int i=0; i < 2048 && navail < min_bytes; i++) {
+        navail = rdavail(offset);
+    }
 
     // Finally fall back to using the mutex to wait.
     navail = rdavail(offset);

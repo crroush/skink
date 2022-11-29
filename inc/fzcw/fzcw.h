@@ -42,7 +42,6 @@ template <typename Tout> struct zcreader;
 struct zstream {
     // 64K is a reasonable default size that balances performance and memory.
     static constexpr size_t kDefaultSize = 65536;
-    static constexpr double kDefaultSpinLimit = 2e-3;
 
     zstream(size_t size=kDefaultSize)
         : buffer_(size) {}
@@ -116,15 +115,6 @@ struct zstream {
     //
     // Returns the number of bytes actually read.
     ssize_t read(int id, void* ptr, ssize_t nbytes, ssize_t ncons=-1) LOCKS_EXCLUDED(buffer_lock_);
-
-    // Get/set the time limit for spinning waiting for data.
-    double get_spin_limit() const {
-        return spin_limit_.load(std::memory_order_acquire);
-    }
-
-    void set_spin_limit(double seconds) {
-        spin_limit_.store(seconds, std::memory_order_release);
-    }
 
 private:
     // A memory-mapped pointer and size that can unmap itself.
@@ -325,7 +315,6 @@ private:
     GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
 
     std::atomic<bool> wropen_ = true;
-    std::atomic<double> spin_limit_ = kDefaultSpinLimit;
 
     void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_);
 
