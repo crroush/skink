@@ -216,7 +216,7 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
     }
 
     // Spin briefly before falling back to mutex.
-    for (int i=0; i < 2048 && navail < min_bytes; i++) {
+    for (int i=0; i < 4096 && navail < min_bytes; i++) {
         navail = rdavail(offset);
     }
 
