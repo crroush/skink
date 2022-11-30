@@ -1,6 +1,7 @@
 // Copyright 2022 Google LLC
 // Author: Sean McAllister
 
+#include <fzcw/memcpy.h>
 #include <fzcw/zstream.h>
 #include <absl/base/attributes.h>
 
@@ -103,7 +104,7 @@ bool zstream::resize(ssize_t nbytes) {
 
         void* dst = new_buffer.data() + (wroffset - ncopy) % new_size;
         void* src = old_buffer.data() + (wroffset - ncopy) % old_size;
-        memcpy(dst, src, old_size);
+        __folly_memcpy(dst, src, old_size);
     }
 
     // Save the new memory mapped buffer.
@@ -127,7 +128,7 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
         }
 
         ssize_t nwrite = std::min(remain, navail);
-        memcpy(buffer_.data(wroffset_), cptr, nwrite);
+        __folly_memcpy(buffer_.data(wroffset_), cptr, nwrite);
         cptr   += nwrite;
         remain -= nwrite;
 
@@ -221,7 +222,7 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
         }
 
         ssize_t nread = std::min(navail, remain);
-        memcpy(cptr, buffer_.data(offset), nread);
+        __folly_memcpy(cptr, buffer_.data(offset), nread);
         cptr   += nread;
         remain -= nread;
         offset += nread;

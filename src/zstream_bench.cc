@@ -4,6 +4,7 @@
 #include <future>
 #include <vector>
 
+#include <sched.h>
 #include <stdio.h>
 
 #include <spdlog/spdlog.h>
@@ -29,6 +30,12 @@ inline double stopwatch(double start) {
 
 // Writes a given amount of bytes to the stream, returns number written.
 ssize_t writer(zstream& stream, ssize_t nbyte) {
+    // writer thread goes on CPU 3
+    cpu_set_t cpus;
+    CPU_ZERO(&cpus);
+    CPU_SET(3, &cpus);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpus);
+
     std::vector<char> data(32768);
 
     ssize_t remain = nbyte;
@@ -42,6 +49,12 @@ ssize_t writer(zstream& stream, ssize_t nbyte) {
 
 // Reads a given amount of bytes from the stream, returns number read.
 ssize_t reader(int id, zstream& stream, ssize_t nbyte) {
+    // reader threads go on CPUs 4 on
+    cpu_set_t cpus;
+    CPU_ZERO(&cpus);
+    CPU_SET(4+id, &cpus);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpus);
+
     std::vector<char> data(32768);
 
     ssize_t remain = nbyte;
