@@ -326,8 +326,8 @@ private:
         return wroffset_.closed();
     }
 
-    // Increment a read offset in-place.
-    void inc_reader(AtomicInt64& reader, int64_t nbytes);
+    // Increment a read offset.
+    void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_);
 
     // Return current space in bytes available for writing.
     int64_t wravail() const SHARED_LOCKS_REQUIRED(buffer_lock_) {

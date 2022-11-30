@@ -177,16 +177,15 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
     }
 
     absl::ReaderMutexLock lock(&buffer_lock_);
-    AtomicInt64* reader;
+    int64_t offset;
     {
         absl::ReaderMutexLock lock(&reader_lock_);
         auto iter = readers_.find(id);
         if (iter == readers_.end()) {
             return -1;
         }
-        reader = &iter->second;
+        offset = iter->second.value();
     }
-    int64_t offset = reader->value();
 
     // Cast to char pointer so we can do arithmetic.
     char* cptr = static_cast<char*>(ptr);
@@ -206,7 +205,7 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
 
         ssize_t nconsume = std::min(ncons-consumed, nread);
         if (nconsume > 0) {
-            inc_reader(*reader, nconsume);
+            inc_reader(id, nconsume);
             consumed += nconsume;
         }
     }
@@ -218,12 +217,7 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
 bool zstream::skip(int id, ssize_t nbytes) {
     if (nbytes > 0) {
         absl::ReaderMutexLock lock0(&buffer_lock_);
-        absl::ReaderMutexLock lock1(&reader_lock_);
-        auto iter = readers_.find(id);
-        if (iter == readers_.end()) {
-            return false;
-        }
-        inc_reader(iter->second, nbytes);
+        inc_reader(id, nbytes);
     }
     return true;
 }
@@ -313,10 +307,17 @@ void zstream::del_reader(int id) {
     min_read_offset_.Unlock();
 }
 
-void zstream::inc_reader(AtomicInt64& reader, int64_t nbytes) {
+void zstream::inc_reader(int id, int64_t nbytes) {
+    absl::ReaderMutexLock lock(&reader_lock_);
+
+    auto iter = readers_.find(id);
+    if (iter == readers_.end()) {
+        return;
+    }
+
     // Increment the reader offset.
-    int64_t offset = reader.value();
-    reader = offset + nbytes;
+    int64_t offset = iter->second.value();
+    iter->second = offset + nbytes;
 
     // If our old offset matches the minimum offset we might have been the
     // bottleneck, update the minimum offset value.
