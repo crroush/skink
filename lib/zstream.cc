@@ -138,6 +138,29 @@ ssize_t zstream::write(const void* ptr, ssize_t nbytes) {
     return nbytes-remain;
 }
 
+
+void* zstream::wborrow(ssize_t size) {
+    DCHECK(size > 0);
+    resize(2*size);
+
+    buffer_lock_.ReaderLock();
+    ssize_t navail = await_write_space(size);
+    if (navail < size) {
+        buffer_lock_.ReaderUnlock();
+        return nullptr;
+    }
+
+    return buffer_.data(wroffset_);
+}
+
+
+void zstream::wrelease(ssize_t size) {
+    DEBUG(buffer_lock_.AssertReaderHeld());
+    wroffset_ += size;
+    buffer_lock_.ReaderUnlock();
+}
+
+
 ssize_t zstream::await_write_space(ssize_t min_bytes) {
     // Check if we have space already.
     ssize_t navail = wravail();
@@ -251,7 +274,7 @@ sizeptr<const void> zstream::rborrow(int id, ssize_t size) {
 
 
 void zstream::rrelease(int id, ssize_t size) {
-    DCHECK(buffer_lock_.AssertReaderHeld());
+    DEBUG(buffer_lock_.AssertReaderHeld());
     buffer_lock_.ReaderUnlock();
     skip(id, size);
 }
