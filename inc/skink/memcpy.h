@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdlib>
+#include <cstring>
 
 // Bindings for folly memcpy implementation.
 extern "C" {

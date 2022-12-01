@@ -18,9 +18,23 @@ add_subdirectory(third-party)
 # all of _their_ tests as well.
 enable_testing()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -Wall -Wextra -Wpedantic -Werror -gmlt")
-if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  set(CMAKE_CXX_FLAGS_DEBUG "-g -Wthread-safety")
+# Default compile options, enable all warnings and minimum line table debug info
+# to get good stack traces.
+add_compile_options(-Wall -Wextra -Wpedantic -Werror -gmlt)
+
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+   add_compile_options("-g")
+
+   if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+     # Enable thread annotation checking in clang.
+     add_compile_options("-Wthread-safety")
+   endif()
+endif()
+
+# Define configuration options.
+set(OPT_NATIVE false CACHE BOOL "Enable -march=native")
+if (OPT_NATIVE)
+   add_compile_options(-march=native)
 endif()
 
 include_directories(inc)
