@@ -6,3 +6,9 @@ target_link_libraries(
   CLI11
   spdlog
 )
+
+add_executable(random-bench random_bench.cc)
+target_link_libraries(
+  random-bench
+  benchmark_main
+)
