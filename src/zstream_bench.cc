@@ -1,3 +1,4 @@
+#include <skink/random.h>
 #include <skink/zstream.h>
 
 #include <algorithm>
@@ -41,8 +42,13 @@ ssize_t writer(zstream& stream, ssize_t nbyte) {
     ssize_t remain = nbyte;
     while (remain) {
         ssize_t nwrite = std::min(remain, (ssize_t)data.size());
-        remain -= stream.write(data.data(), nwrite);
+        ssize_t nwrote = stream.write(data.data(), nwrite);
+        remain -= nwrote;
+        if (nwrote < nwrite) {
+            break;
+        }
     }
+    stream.wrclose();
     return nbyte - remain;
 }
 
@@ -61,7 +67,7 @@ ssize_t reader(int id, zstream& stream, ssize_t nbyte) {
     while (remain) {
         ssize_t size = std::min(remain, (ssize_t)data.size());
         ssize_t nread = stream.read(id, data.data(), size, size);
-        if (nread < 0) {
+        if (nread <= 0) {
             break;
         }
         remain -= nread;

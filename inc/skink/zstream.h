@@ -46,7 +46,10 @@ struct zstream {
     static constexpr size_t kDefaultSize = 65536;
 
     zstream(size_t size=kDefaultSize)
-        : buffer_(size) {}
+        : buffer_(size) {
+        // Mark read offset as closed until we have readers added.
+        min_read_offset_.close();
+    }
 
     ~zstream();
 
@@ -69,7 +72,7 @@ struct zstream {
     }
 
     // Adds a reader to the buffer and returns an integer identifying it.
-    int add_reader() LOCKS_EXCLUDED(reader_lock_);
+    int add_reader() LOCKS_EXCLUDED(buffer_lock_, reader_lock_);
 
     // Removes a given reader from the buffer.  Noop if no such reader exists.
     void del_reader(int id) LOCKS_EXCLUDED(reader_lock_);
@@ -232,10 +235,16 @@ private:
             return value_;
         }
 
-        // Mark the offset as closed, no further updates are allowed.
+        // Mark the offset as closed.
         void close() LOCKS_EXCLUDED(lock_) {
             absl::WriterMutexLock lock(&lock_);
             closed_.store(true, std::memory_order_release);
+        }
+
+        // Mark the offset as open again and allow it to be used.
+        void open() LOCKS_EXCLUDED(lock_) {
+            absl::WriterMutexLock lock(&lock_);
+            closed_.store(false, std::memory_order_release);
         }
 
         // Returns true if the offset has been shutdown.
@@ -245,6 +254,7 @@ private:
 
         // Set the underlying value atomicly.  Requires that the lock is held.
         void set_atomic(int64_t value) EXCLUSIVE_LOCKS_REQUIRED(lock_) {
+            DCHECK(!closed());
             value_ = value;
         }
 
@@ -253,6 +263,7 @@ private:
         }
 
         Offset& operator=(int64_t value) LOCKS_EXCLUDED(lock_) {
+            DCHECK(!closed());
             absl::WriterMutexLock lock(&lock_);
             value_ = value;
             return *this;
@@ -268,6 +279,7 @@ private:
         // Set the value to v if v is greater than the current value, otherwise
         // do nothing.  Return the current value.
         int64_t SetMax(int64_t v) LOCKS_EXCLUDED(lock_) {
+            DCHECK(!closed());
             int64_t curval = value();
             if (v <= curval) {
                 return curval;
@@ -286,15 +298,23 @@ private:
         // Blocks until the value is >= v, or if the offset was closed.  If
         // the value is already >= v, then no lock is taken.
         //
-        // Returns the current value which is always >= v or kClosed.
+        // Returns the current value which is always >= v unless the writer has
+        // closed.
         int64_t AwaitGe(int64_t v) const LOCKS_EXCLUDED(lock_) {
+            // Value is already larger than v or we're closed, return.
             int64_t curval = value();
             if (curval >= v || closed()) {
                 return curval;
             }
 
-            lock_.ReaderLock();
-            curval = value_;
+            // Lock and wait.
+            absl::ReaderMutexLock lock(&lock_);
+            return AwaitGeLocked(v);
+        }
+
+        // Synchronized part of AwaitGe.
+        int64_t AwaitGeLocked(int64_t v) const SHARED_LOCKS_REQUIRED(lock_) {
+            int64_t curval = value_;
             if (curval < v) {
                 const auto ready = [this, v]() {
                     DEBUG(lock_.AssertReaderHeld());
@@ -303,7 +323,6 @@ private:
                 lock_.Await(absl::Condition(&ready));
                 curval = value_;
             }
-            lock_.ReaderUnlock();
             return curval;
         }
 

@@ -163,6 +163,11 @@ void zstream::wrelease(ssize_t size) {
 
 
 ssize_t zstream::await_write_space(ssize_t min_bytes) {
+    // No readers, allow free-wheeling write.
+    if (min_read_offset_.closed()) {
+        return buffer_.size();
+    }
+
     // Check if we have space already.
     ssize_t navail = wravail();
     if (navail >= min_bytes) {
@@ -175,16 +180,12 @@ ssize_t zstream::await_write_space(ssize_t min_bytes) {
 
     // Finally fall back to using the mutex to sleep.
     int64_t wroffset = wroffset_;
-    int64_t minread  = min_read_offset_;
-    navail = buffer_.size() - (wroffset - minread);
+    int64_t rdoffset = min_read_offset_;
+
+    navail = buffer_.size() - (wroffset - rdoffset);
     if (navail < min_bytes) {
-        int64_t min_offset = minread + (min_bytes-navail);
-
-        buffer_lock_.ReaderUnlock();
-        min_read_offset_.AwaitGe(min_offset);
-        buffer_lock_.ReaderLock();
-
-        navail = wravail();
+        rdoffset = min_read_offset_.AwaitGe(rdoffset + (min_bytes - navail));
+        navail   = buffer_.size() - (wroffset - rdoffset);
     }
     return navail;
 }
@@ -200,10 +201,12 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
         resize(2*(nbytes-ncons));
     }
 
-    absl::ReaderMutexLock lock(&buffer_lock_);
+    absl::ReaderMutexLock lock0(&buffer_lock_);
+
+    // Lookup current offset value.
     int64_t offset;
     {
-        absl::ReaderMutexLock lock(&reader_lock_);
+        absl::ReaderMutexLock lock1(&reader_lock_);
         auto iter = readers_.find(id);
         if (iter == readers_.end()) {
             return -1;
@@ -237,7 +240,6 @@ ssize_t zstream::read(int id, void* ptr, ssize_t nbytes, ssize_t ncons) {
     return nbytes-remain;
 }
 
-
 bool zstream::skip(int id, ssize_t nbytes) {
     if (nbytes > 0) {
         absl::ReaderMutexLock lock0(&buffer_lock_);
@@ -252,6 +254,7 @@ sizeptr<const void> zstream::rborrow(int id, ssize_t size) {
     resize(2*size);
 
     buffer_lock_.ReaderLock();
+
     int64_t offset;
     {
         absl::ReaderMutexLock lock(&reader_lock_);
@@ -269,7 +272,7 @@ sizeptr<const void> zstream::rborrow(int id, ssize_t size) {
         return {nullptr, navail};
     }
 
-    // Note: Do not release lock.
+    // Note: Do not release buffer lock.
     return {buffer_.data(offset), size};
 }
 
@@ -307,7 +310,23 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
 
 int zstream::add_reader() {
     absl::WriterMutexLock lock(&reader_lock_);
-    readers_.emplace(reader_oneup_, static_cast<int64_t>(min_read_offset_));
+
+    bool no_readers = readers_.empty();
+
+    // Position the reader at the current minimum read offset or at the current
+    // current write position if there are no other readers.
+    int64_t offset = min_read_offset_;
+    if (no_readers) {
+        offset = wroffset_;
+    }
+    readers_.emplace(reader_oneup_, offset);
+
+    // Update the minimum read offset if there were no other readers until now.
+    if (no_readers) {
+        min_read_offset_.open();
+        min_read_offset_ = offset;
+    }
+
     return reader_oneup_++;
 }
 
@@ -320,40 +339,45 @@ void zstream::del_reader(int id) {
     }
     readers_.erase(iter);
 
-    // If our old offset matches the minimum offset we might have been the
-    // bottleneck, update the minimum offset value.
-    min_read_offset_.Lock();
-    int64_t min = std::numeric_limits<int64_t>::max();
-    for (const auto& pair: readers_) {
-        min = std::min(min, pair.second.value());
+    // Update the minimum read offset in case this reader was the blocker.
+    if (!readers_.empty()) {
+        min_read_offset_.Lock();
+        int64_t min_offset = std::numeric_limits<int64_t>::max();
+        for (const auto& pair: readers_) {
+            min_offset = std::min(min_offset, pair.second.value());
+        }
+        min_read_offset_.set_atomic(min_offset);
+        min_read_offset_.Unlock();
+    } else {
+        // Mark minimum read offset as closed to allow writer to free wheel.
+        min_read_offset_.close();
     }
-    min_read_offset_.set_atomic(min);
-    min_read_offset_.Unlock();
 }
 
 void zstream::inc_reader(int id, int64_t nbytes) {
-    absl::ReaderMutexLock lock(&reader_lock_);
-
+    reader_lock_.ReaderLock();
     auto iter = readers_.find(id);
     if (iter == readers_.end()) {
         return;
     }
 
-    // Increment the reader offset.
+    // Read offset and determine if we might be the blocking reader.
     int64_t offset = iter->second.value();
-    iter->second = offset + nbytes;
+    bool blocking = (offset == min_read_offset_);
 
-    // If our old offset matches the minimum offset we might have been the
-    // bottleneck, update the minimum offset value.
-    if (min_read_offset_ == offset) {
-        min_read_offset_.Lock();
-        if (min_read_offset_ == offset) {
-            int64_t min = std::numeric_limits<int64_t>::max();
+    // Increment the offset
+    iter->second = offset + nbytes;
+    reader_lock_.ReaderUnlock();
+
+    if (blocking) {
+        absl::WriterMutexLock lock(&reader_lock_);
+        if (offset == min_read_offset_) {
+            // Compute new minimum offset.
+            int64_t min_offset = std::numeric_limits<int64_t>::max();
             for (const auto& pair: readers_) {
-                min = std::min(min, pair.second.value());
+                min_offset = std::min(min_offset, pair.second.value());
             }
-            min_read_offset_.set_atomic(min);
+            min_read_offset_.SetMax(min_offset);
         }
-        min_read_offset_.Unlock();
     }
 }
