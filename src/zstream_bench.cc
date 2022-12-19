@@ -1,4 +1,4 @@
-#include <fzcw/zstream.h>
+#include <skink/zstream.h>
 
 #include <algorithm>
 #include <future>

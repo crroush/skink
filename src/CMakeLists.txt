@@ -1,7 +1,7 @@
 add_executable(zstream-bench zstream_bench.cc)
 target_link_libraries(
   zstream-bench
-  libfzcw
+  libskink
   spdlog
   CLI11
   absl::flat_hash_map

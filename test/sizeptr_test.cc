@@ -1,4 +1,4 @@
-#include <fzcw/sizeptr.h>
+#include <skink/sizeptr.h>
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
