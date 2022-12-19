@@ -86,6 +86,7 @@ static inline void benchmark() {
         bool passed;
         for (ssize_t nreader = 1; nreader <= 8; ++nreader) {
             zstream stream(bufsize);
+            stream.set_spin_limit(1000000);
 
             // Create readers.
             double tstart = stopwatch();
