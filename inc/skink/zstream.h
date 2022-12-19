@@ -8,7 +8,7 @@
 #include <memory>
 #include <optional>
 
-#include <fzcw/sizeptr.h>
+#include <skink/sizeptr.h>
 
 // third party libraries
 #include <absl/base/optimization.h>

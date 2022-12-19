@@ -1,8 +1,8 @@
 // Copyright 2022 Google LLC
 // Author: Sean McAllister
 
-#include <fzcw/memcpy.h>
-#include <fzcw/zstream.h>
+#include <skink/memcpy.h>
+#include <skink/zstream.h>
 #include <absl/base/attributes.h>
 
 #include <limits>
