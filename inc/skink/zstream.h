@@ -36,6 +36,101 @@
 #define DCHECK(condition)
 #endif
 
+// A single-writer, multiple-reader thread safe stream.  This class lets you
+// write a stream of bytes which are deliver to multiple readers (each reader
+// sees a complete copy of the data).  Multiple concurrent calls to write data
+// from different threads or to read data with a given reader id are not safe.
+// It's expected that the writer, and each reader will operate from one thread
+// at a time.  Anything beyond that will require user synchronization.
+//
+// This class works by memory-mapping a buffer of data, and then mapping it
+// again right after itself.  This lets us have a circular buffer of data while
+// still being able to return a single pointer to a contiguous range of memory
+// for borrowing operations:
+//
+// An operation that would have required to memcpy-s at the start and end of the
+// buffer before:
+//
+//    ──┤         ├─────
+//   ┌──────────────────┐
+//   │▒▒▒         ▒▒▒▒▒▒│
+//   └──────────────────┘
+//   0                  N
+//
+// Can instead be done with a single operation across the memory map boundary:
+//
+//                ├────────┤
+//   ┌──────────────────┬──────────────────┐
+//   │            ▒▒▒▒▒▒│▒▒▒               │
+//   └──────────────────┴──────────────────┘
+//   0                  N                  2N
+//
+//
+// API
+// ‾‾‾
+// write(ptr, nbytes) -
+//   Writes some number of bytes to the stream, may block until space is
+//   available.  Returns with a short write count if all the readers detach.
+//
+// add_reader() -
+//   Adds a new reader with its own offset into the stream.
+//
+// del_reader(id) -
+//   Deletes a reader from the stream.
+//
+// read(id, ptr, nbytes[, ncons]) -
+//   Reads some number of bytes for a particular reader id.  Takes an optional
+//   'consume' length which indicates how many bytes of the read should actually
+//   be discarded.  This allows for overlapping reads.
+//
+// skip(id, nbytes) -
+//   Skips a reader forward some number of bytes.
+//
+// Borrowing
+// ‾‾‾‾‾‾‾‾‾
+//   In addition to the regular read/write API above, we also support a 'borrow'
+// API which works by returning a pointer directly into the buffer memory rather
+// than copying the data.
+//
+// Naturally, to borrow a buffer of size N bytes, we must have at least N bytes
+// in the buffer.  Thus borrowing may result in increasing the size of the
+// buffer underneath to service the request.  The buffer will only ever increase
+// to 2N samples however so this cost is quickly amortized.
+//
+// Every borrow call must be paired with a matching release call because the
+// borrow necessarily locks the buffer while the borrow is outstanding.
+//
+// rborrow(id, size) -
+//   Borrows a block of data for reading from the given readers current offset.
+//
+// rrelease(id, size) -
+//   Releases a previous rborrow and increments the readers offset by the given
+//   number of bytes.
+//
+// wborrow(size) -
+//   Borrows a block of data for writing from the current write offset.
+//
+// wrelease(size) -
+//   Releases a previous wborrow and advanced the write pointer by the given
+//   amount.
+//
+// Spinning and Waiting
+// ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
+//   We must have some wait mechanism when there isn't enough data to service
+// a request.  Naively we could immediately wait on a condition variable until
+// data/space becomes available, but in the very common streaming case, we can
+// get into a situation where processes are being put to sleep and right after,
+// the data comes in, leading to poor throughput since the process has to be
+// rescheduled.
+//
+// To minimize this, we spin a little bit before falling back to a conditional
+// critical section to wait for the data.  The default spin value is meant to be
+// a good default for common usage, but it can be adjusted via set_spin_limit().
+//
+// Lower spin values will sleep more and use less CPU, but at a cost of poorer
+// throughput.  Higher values will burn more CPU but be more responsive when
+// data arrives.
+
 // Get page size once at process start.
 static const int FZCW_PAGE_SIZE = getpagesize();
 
@@ -68,7 +163,9 @@ struct zstream {
         return buffer_.data() == nullptr;
     }
 
-    int spin_limit() const { return spin_limit_; }
+    // Get and set the spin limit when waiting for data.  Higher values allow
+    // for more throughput in the presence of contention, but use more CPU time.
+    int  spin_limit() const { return spin_limit_; }
     void set_spin_limit(int limit) { spin_limit_ = limit; }
 
     // Close the write end of the buffer, signaling no more data.
