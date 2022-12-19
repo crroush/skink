@@ -44,7 +44,8 @@ template <typename Tout> struct zcreader;
 
 struct zstream {
     // 64K is a reasonable default size that balances performance and memory.
-    static constexpr size_t kDefaultSize = 65536;
+    static constexpr int kDefaultSize = 65536;
+    static constexpr int kDefaultSpinCount = 4096;
 
     zstream(size_t size=kDefaultSize)
         : buffer_(size) {
@@ -66,6 +67,9 @@ struct zstream {
         absl::ReaderMutexLock lock(&buffer_lock_);
         return buffer_.data() == nullptr;
     }
+
+    int spin_limit() const { return spin_limit_; }
+    void set_spin_limit(int limit) { spin_limit_ = limit; }
 
     // Close the write end of the buffer, signaling no more data.
     void wrclose() {
@@ -351,6 +355,11 @@ private:
     GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
 
     spinlock reader_scan_lock_ ABSL_ACQUIRED_AFTER(reader_lock_);
+
+    // How much to spin before falling back to mutex for synchronization.  This
+    // trades off CPU usage and throughput.  More spinning will burn more CPU
+    // but will respond more quickly when readers/writer advance their offsets.
+    AtomicInt64 spin_limit_ = kDefaultSpinCount;
 
     // Returns true if the stream is open for writing.
     bool wrclosed() {
