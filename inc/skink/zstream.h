@@ -9,6 +9,7 @@
 #include <optional>
 
 #include <skink/sizeptr.h>
+#include <skink/spinlock.h>
 
 // third party libraries
 #include <absl/base/optimization.h>
@@ -348,6 +349,8 @@ private:
     GUARDED_BY(buffer_lock_) MappedBuffer buffer_;
     GUARDED_BY(reader_lock_) absl::flat_hash_map<int, AtomicInt64> readers_;
     GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
+
+    spinlock reader_scan_lock_ ABSL_ACQUIRED_AFTER(reader_lock_);
 
     // Returns true if the stream is open for writing.
     bool wrclosed() {

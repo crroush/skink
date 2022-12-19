@@ -355,22 +355,33 @@ void zstream::del_reader(int id) {
 }
 
 void zstream::inc_reader(int id, int64_t nbytes) {
-    reader_lock_.ReaderLock();
+    absl::ReaderMutexLock lock(&reader_lock_);
     auto iter = readers_.find(id);
     if (iter == readers_.end()) {
         return;
     }
 
-    // Read offset and determine if we might be the blocking reader.
+    // Read and increment the current offset value.
     int64_t offset = iter->second.value();
-    bool blocking = (offset == min_read_offset_);
-
-    // Increment the offset
     iter->second = offset + nbytes;
-    reader_lock_.ReaderUnlock();
 
-    if (blocking) {
-        absl::WriterMutexLock lock(&reader_lock_);
+    // If our offset is equal to the minimum offset then we might be the slow
+    // reader so we need to recompute the minimum read offset and notify the
+    // writer that there's (maybe) more space available.
+    //
+    // We have to serialize the individual readers when they scan the offset
+    // table, otherwise there's potential for a race condition.
+    //
+    // If we have two readers both at the minimum value X: [X, X] and both
+    // incrementing to a new value Y: [Y,Y], it's possible for the readers
+    // readers to see [Y, X], or [X, Y] and recompute a minimum value of X
+    // again.  By serializaing them, one or the other is guaranteed to see both
+    // changes and compute the correct value.
+    //
+    // This extends to N minimum readers, one will always be the last in the
+    // serialization order and compute the correct minimum value.
+    if (offset == min_read_offset_) {
+        reader_scan_lock_.lock();
         if (offset == min_read_offset_) {
             // Compute new minimum offset.
             int64_t min_offset = std::numeric_limits<int64_t>::max();
@@ -379,5 +390,6 @@ void zstream::inc_reader(int id, int64_t nbytes) {
             }
             min_read_offset_.SetMax(min_offset);
         }
+        reader_scan_lock_.unlock();
     }
 }
