@@ -43,6 +43,10 @@
 // It's expected that the writer, and each reader will operate from one thread
 // at a time.  Anything beyond that will require user synchronization.
 //
+// Care must also be taken as to which thread owns the destruction of the queue.
+// It's recommended that the writer thread also own the object and destruct it
+// when it's done.
+//
 // This class works by memory-mapping a buffer of data, and then mapping it
 // again right after itself.  This lets us have a circular buffer of data while
 // still being able to return a single pointer to a contiguous range of memory
@@ -174,7 +178,7 @@ struct zstream {
     }
 
     // Adds a reader to the buffer and returns an integer identifying it.
-    int add_reader() LOCKS_EXCLUDED(buffer_lock_, reader_lock_);
+    int add_reader() LOCKS_EXCLUDED(reader_lock_);
 
     // Removes a given reader from the buffer.  Noop if no such reader exists.
     void del_reader(int id) LOCKS_EXCLUDED(reader_lock_);
@@ -283,8 +287,7 @@ private:
     // An atomic integer that's movable so it can be used in containers.  This
     // wraps a std::atomic<int64_t> and allows accessing it with acquire/release
     // semantics by default, to avoid having to specify memory ordering
-    // everywhere.  This is aligned and padded so that each one will take up
-    // one cacheline to avoid destructive sharing.
+    // everywhere.
     //
     // X86 has acquire/release semantics natively so this has no overhead there.
     struct AtomicInt64 {
@@ -464,7 +467,7 @@ private:
     }
 
     // Increment a read offset.
-    void inc_reader(int id, int64_t nbytes) LOCKS_EXCLUDED(reader_lock_);
+    void inc_reader(int id, int64_t nbytes) SHARED_LOCKS_REQUIRED(buffer_lock_) LOCKS_EXCLUDED(reader_lock_);
 
     // Return current space in bytes available for writing.
     int64_t wravail() const SHARED_LOCKS_REQUIRED(buffer_lock_) {
