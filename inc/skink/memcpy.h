@@ -1,17 +1,24 @@
+// Copyright 2022 Google LLC
+// Author: Sean McAllister
+
 #pragma once
 
 #include <cstring>
 
 // Bindings for folly memcpy implementation.
 extern "C" {
-void* __folly_memcpy(
-    void* __restrict dst, const void* __restrict src, size_t size);
+void *__folly_memcpy(  //
+    void *__restrict dst,
+    const void *__restrict src,
+    size_t size);
 
 #ifndef __AVX2__
-inline void* __folly_memcpy(
-    void* __restrict dst, const void* __restrict src, size_t size) {
-    return memcpy(dst, src, size);
+inline void *__folly_memcpy(  //
+    void *__restrict dst,
+    const void *__restrict src,
+    size_t size) {
+  return memcpy(dst, src, size);
 }
 #endif
 
-} // extern "C"
+}  // extern "C"

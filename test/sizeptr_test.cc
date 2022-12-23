@@ -1,48 +1,45 @@
 #include <skink/sizeptr.h>
 
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 using namespace ::testing;
 
 TEST(sizeptr, ImplicitCastWorks) {
-    struct A {};
-    struct B : A {};
+  struct A {};
+  struct B : A {};
 
-    sizeptr<B> b(new B, sizeof(B));
-    sizeptr<A> a = b;
-    EXPECT_THAT(a.get(),  Eq(b.get()));
-    EXPECT_THAT(a.size(), Eq(b.size()));
+  sizeptr<B> b(new B, sizeof(B));
+  sizeptr<A> a = b;
+  EXPECT_THAT(a.get(), Eq(b.get()));
+  EXPECT_THAT(a.size(), Eq(b.size()));
 }
-
 
 TEST(sizeptr, AddingConstWorks) {
-    struct A {};
+  struct A {};
 
-    sizeptr<A> a(new A, sizeof(A));
-    sizeptr<const A> b = a;
+  sizeptr<A> a(new A, sizeof(A));
+  sizeptr<const A> b = a;
 
-    EXPECT_THAT(a.get(),  Eq(b.get()));
-    EXPECT_THAT(a.size(), Eq(b.size()));
+  EXPECT_THAT(a.get(), Eq(b.get()));
+  EXPECT_THAT(a.size(), Eq(b.size()));
 }
-
 
 TEST(sizeptr, ExplicitCastWorks) {
-    struct A {};
-    struct B {}; // No inheritance
+  struct A {};
+  struct B {};  // No inheritance
 
-    sizeptr<B> b(new B, sizeof(B));
-    sizeptr<A> a = static_cast<sizeptr<A>>(b);
-    EXPECT_THAT((void*)a.get(), Eq((void*)b.get()));
-    EXPECT_THAT(a.size(), Eq(b.size()));
+  sizeptr<B> b(new B, sizeof(B));
+  sizeptr<A> a = static_cast<sizeptr<A>>(b);
+  EXPECT_THAT((void *)a.get(), Eq((void *)b.get()));
+  EXPECT_THAT(a.size(), Eq(b.size()));
 }
 
-
 TEST(sizeptr, VoidPointersWork) {
-    int val;
-    sizeptr<void>       a(&val, sizeof(val));
-    sizeptr<const void> b(&val, sizeof(val));
+  int val;
+  sizeptr<void> a(&val, sizeof(val));
+  sizeptr<const void> b(&val, sizeof(val));
 
-    EXPECT_THAT(a.get(),  Eq(b.get()));
-    EXPECT_THAT(a.size(), Eq(b.size()));
+  EXPECT_THAT(a.get(), Eq(b.get()));
+  EXPECT_THAT(a.size(), Eq(b.size()));
 }
