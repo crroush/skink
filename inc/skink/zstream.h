@@ -138,8 +138,10 @@
 // Get page size once at process start.
 static const int FZCW_PAGE_SIZE = getpagesize();
 
-template <typename Tinp> struct zcwriter;
-template <typename Tout> struct zcreader;
+template <typename Tinp>
+struct zcwriter;
+template <typename Tout>
+struct zcreader;
 
 struct zstream {
   // 64K is a reasonable default size that balances performance and memory.

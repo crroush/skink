@@ -9,7 +9,8 @@
 // A simple pointer + size type.  Does not manage the pointer memory, just
 // supports tying the underlying memory size with the pointer itself.
 
-template <typename T, typename Enable = void> struct sizeptr {
+template <typename T, typename Enable = void>
+struct sizeptr {
   using type = T;
 
   constexpr sizeptr(T *ptr = nullptr, ssize_t size = 0)
@@ -43,14 +44,16 @@ template <typename T, typename Enable = void> struct sizeptr {
 };
 
 // Specialization for [const] void pointer without the dereference operators.
-template <typename T> struct sizeptr<T, std::enable_if_t<std::is_void_v<T>>> {
+template <typename T>
+struct sizeptr<T, std::enable_if_t<std::is_void_v<T>>> {
   using type = T;
 
   constexpr sizeptr(void *ptr = nullptr, ssize_t size = 0)
       : ptr_(ptr), size_(size) {}
 
   // Explicit conversion operator.
-  template <class U> explicit operator sizeptr<U>() const {
+  template <class U>
+  explicit operator sizeptr<U>() const {
     return { static_cast<U *>(get()), size() };
   }
 

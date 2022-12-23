@@ -62,7 +62,8 @@ struct splitmix64 {
 };
 
 // Mixin for PRNGs to inherit from to get pre-defined generator functions.
-template <typename T> struct prng_base {
+template <typename T>
+struct prng_base {
   // Generates a uniform random float value in the range [0,1).
   float uniform_flt() {
     static_assert(std::numeric_limits<float>::is_iec559, "Need IEEE754 floats");
