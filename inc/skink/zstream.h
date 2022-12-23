@@ -221,6 +221,9 @@ struct zstream {
     bool skip(int id, ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
 
     // Borrow memory for reading from the current offset of the reader.
+    //
+    // All rborrows that return a non-null pointer must be paired with a
+    // rrelease().
     sizeptr<const void> rborrow(int id, ssize_t size) SHARED_TRYLOCK_FUNCTION(true, buffer_lock_);
 
     // Release memory borrowed with rborrow back to the buffer, advances the
@@ -230,6 +233,9 @@ struct zstream {
     // Borrow memory for writing from the current write offset.  If the
     // requested size can't be granted (due to all the readers detaching),
     // returns nullptr.
+    //
+    // All wborrows that return a non-null pointer must be paired with a
+    // following wrelease.
     void* wborrow(ssize_t size) SHARED_TRYLOCK_FUNCTION(true, buffer_lock_);
 
     // Release memory borrowed with wborrow().  Size is the number of bytes

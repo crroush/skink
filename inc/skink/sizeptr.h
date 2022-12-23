@@ -3,8 +3,6 @@
 #include <unistd.h>
 #include <type_traits>
 
-namespace {
-
 // A simple pointer + size type.  Does not manage the pointer memory, just
 // supports tying the underlying memory size with the pointer itself.
 
@@ -30,6 +28,10 @@ struct sizeptr {
     constexpr       T* get()  const { return ptr_;  }
     constexpr ssize_t  size() const { return size_; }
 
+    explicit operator bool() {
+        return ptr_ != nullptr && size_ > 0;
+    }
+
        operator T*() const { return  get(); }
     T& operator  *() const { return *get(); }
     T* operator ->() const { return  get(); }
@@ -53,6 +55,10 @@ struct sizeptr<T, std::enable_if_t<std::is_void_v<T>>> {
         return {static_cast<U*>(get()), size()};
     }
 
+    explicit operator bool() {
+        return ptr_ != nullptr && size_ > 0;
+    }
+
     constexpr       T* get()  const { return ptr_;  }
     constexpr ssize_t  size() const { return size_; }
 
@@ -60,5 +66,3 @@ private:
     T* ptr_;
     ssize_t size_;
 };
-
-}
