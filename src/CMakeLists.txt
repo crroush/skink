@@ -10,5 +10,6 @@ target_link_libraries(
 add_executable(random-bench random_bench.cc)
 target_link_libraries(
   random-bench
+  absl::numeric
   benchmark_main
 )

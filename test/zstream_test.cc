@@ -290,5 +290,3 @@ TEST(zstream, DataCorrectI16Borrow_Rand) {
 TEST(zstream, DataCorrectU64Borrow_Rand) {
     EXPECT_THAT(TestBorrowStream<uint64_t>(1 << 26, 4, true), IsTrue());
 }
-
-
