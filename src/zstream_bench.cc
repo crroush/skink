@@ -82,13 +82,12 @@ ssize_t writer_borrow(zstream &stream, ssize_t nbyte) {
   while (remain) {
     ssize_t nwrite = std::min(remain, (ssize_t)32768);
 
-    void* ptr = stream.wborrow(nwrite);
+    void *ptr = stream.wborrow(nwrite);
     if (ptr == nullptr) {
       break;
     }
     stream.wrelease(nwrite);
     remain -= nwrite;
-
   }
   stream.wrclose();
   return nbyte - remain;
@@ -104,7 +103,7 @@ ssize_t reader_borrow(int id, zstream &stream, ssize_t nbyte) {
 
   ssize_t remain = nbyte;
   while (remain) {
-    ssize_t size  = std::min(remain, (ssize_t)32768);
+    ssize_t size = std::min(remain, (ssize_t)32768);
 
     sizeptr<const void> ptr = stream.rborrow(id, size);
     if (!ptr) {
@@ -140,26 +139,26 @@ static inline void benchmark(bool borrow) {
       for (ssize_t ii = 0; ii < nreader; ii++) {
         if (borrow) {
           results.emplace_back(std::async(std::launch::async,
-              reader_borrow,
-              stream.add_reader(),
-              std::ref(stream),
-              nbyte));
+                                          reader_borrow,
+                                          stream.add_reader(),
+                                          std::ref(stream),
+                                          nbyte));
         } else {
           results.emplace_back(std::async(std::launch::async,
-              reader,
-              stream.add_reader(),
-              std::ref(stream),
-              nbyte));
+                                          reader,
+                                          stream.add_reader(),
+                                          std::ref(stream),
+                                          nbyte));
         }
       }
 
       // Create writers.
       if (borrow) {
-        std::future<ssize_t> resultw =
-          std::async(std::launch::async, writer_borrow, std::ref(stream), nbyte);
+        std::future<ssize_t> resultw = std::async(
+            std::launch::async, writer_borrow, std::ref(stream), nbyte);
       } else {
         std::future<ssize_t> resultw =
-          std::async(std::launch::async, writer, std::ref(stream), nbyte);
+            std::async(std::launch::async, writer, std::ref(stream), nbyte);
       }
 
       passed = true;
@@ -186,8 +185,8 @@ ssize_t writer_stress(zstream &stream, ssize_t nbyte) {
   prng rnd(1 << 16);
 
   ssize_t remain = nbyte;
-  int iter = 0;
-  uint8_t cnt = 0;
+  int iter       = 0;
+  uint8_t cnt    = 0;
   while (remain) {
     ssize_t nwrite = std::min(remain, (ssize_t)rnd.uniform_i64(1, data.size()));
 
@@ -195,7 +194,7 @@ ssize_t writer_stress(zstream &stream, ssize_t nbyte) {
       fprintf(stderr, "\33[2K\rWriting %5zd, %zd remains", nwrite, remain);
     }
 
-    for (int i=0; i < nwrite; ++i) {
+    for (int i = 0; i < nwrite; ++i) {
       data[i] = cnt++;
     }
 
@@ -213,11 +212,11 @@ ssize_t writer_stress(zstream &stream, ssize_t nbyte) {
 // Reads a given amount of bytes from the stream as abusively as possible.
 ssize_t reader_stress(int id, zstream &stream, ssize_t nbyte) {
   std::vector<uint8_t> data(32768);
-  prng rnd(id+1);
+  prng rnd(id + 1);
 
   ssize_t remain = nbyte;
-  uint8_t cnt = 0;
-  bool passed = true;
+  uint8_t cnt    = 0;
+  bool passed    = true;
   while (remain && passed) {
     ssize_t size  = std::min(remain, (ssize_t)rnd.uniform_i64(1, data.size()));
     ssize_t nread = stream.read(id, data.data(), size, size);
@@ -225,9 +224,13 @@ ssize_t reader_stress(int id, zstream &stream, ssize_t nbyte) {
       break;
     }
 
-    for (int i=0; i < nread; ++i) {
+    for (int i = 0; i < nread; ++i) {
       if (data[i] != cnt++) {
-        fprintf(stderr, "Reader %d saw incorrect data at %d vs %d\n", id, data[i], cnt);
+        fprintf(stderr,
+                "Reader %d saw incorrect data at %d vs %d\n",
+                id,
+                data[i],
+                cnt);
         passed = false;
         break;
       }
@@ -240,8 +243,8 @@ ssize_t reader_stress(int id, zstream &stream, ssize_t nbyte) {
 }
 
 static inline void stress_test(bool) {
-  const int64_t kNbyte = int64_t{1} << 36; // 64 GB
-  const int kNreader = 4;
+  const int64_t kNbyte = int64_t{ 1 } << 36;  // 64 GB
+  const int kNreader   = 4;
 
   // Use a tiny buffer to force as much waiting as possible.
   zstream stream(SK_PAGE_SIZE);
@@ -249,14 +252,14 @@ static inline void stress_test(bool) {
   std::vector<std::future<ssize_t>> results;
   for (ssize_t ii = 0; ii < kNreader; ii++) {
     results.emplace_back(std::async(std::launch::async,
-        reader_stress,
-        stream.add_reader(),
-        std::ref(stream),
-        kNbyte));
+                                    reader_stress,
+                                    stream.add_reader(),
+                                    std::ref(stream),
+                                    kNbyte));
   }
 
   std::future<ssize_t> resultw =
-    std::async(std::launch::async, writer_stress, std::ref(stream), kNbyte);
+      std::async(std::launch::async, writer_stress, std::ref(stream), kNbyte);
 
   for (ssize_t ii = 0; ii < kNreader; ii++) {
     results[ii].wait();
