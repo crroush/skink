@@ -17,8 +17,9 @@
 //
 // See <http://creativecommons.org/publicdomain/zero/1.0/>.
 
-#include <stdint.h>
-#include <string.h>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
 
 #include <absl/base/attributes.h>
 #include <absl/numeric/bits.h>
@@ -118,9 +119,9 @@ struct prng_base {
   template <typename I>
   std::enable_if_t<std::is_integral_v<I>, I> uniform(I lo, I hi) {
     if (hi < lo) {
-      std::swap(lo, hi);
+      std::swap(hi, lo);
     }
-    return uniform_int<I>() % (hi - lo + 1) + lo;
+    return lo + uniform_int<std::make_unsigned_t<I>>() % (hi - lo + 1);
   }
 
   uint64_t uniform_u64(uint64_t lo, uint64_t hi) { return uniform(lo, hi); }

@@ -76,7 +76,7 @@ void zstream::MappedBuffer::unmap() {
 
 bool zstream::resize(ssize_t nbytes) {
   // Roundup to page size.
-  nbytes = (nbytes + FZCW_PAGE_SIZE - 1) / FZCW_PAGE_SIZE * FZCW_PAGE_SIZE;
+  nbytes = (nbytes + SK_PAGE_SIZE - 1) / SK_PAGE_SIZE * SK_PAGE_SIZE;
 
   if (nbytes <= size()) {
     return true;
@@ -385,16 +385,14 @@ void zstream::inc_reader(int id, int64_t nbytes) {
   //
   // This extends to N minimum readers, one will always be the last in the
   // serialization order and compute the correct minimum value.
+  reader_scan_lock_.lock();
   if (offset == min_read_offset_) {
-    reader_scan_lock_.lock();
-    if (offset == min_read_offset_) {
-      // Compute new minimum offset.
-      int64_t min_offset = std::numeric_limits<int64_t>::max();
-      for (const auto &pair : readers_) {
-        min_offset = std::min(min_offset, pair.second.value());
-      }
-      min_read_offset_.SetMax(min_offset);
+    // Compute new minimum offset.
+    int64_t min_offset = std::numeric_limits<int64_t>::max();
+    for (const auto &pair : readers_) {
+      min_offset = std::min(min_offset, pair.second.value());
     }
-    reader_scan_lock_.unlock();
+    min_read_offset_.SetMax(min_offset);
   }
+  reader_scan_lock_.unlock();
 }

@@ -136,7 +136,7 @@
 // data arrives.
 
 // Get page size once at process start.
-static const int FZCW_PAGE_SIZE = getpagesize();
+static const int SK_PAGE_SIZE = getpagesize();
 
 template <typename Tinp>
 struct zcwriter;
@@ -224,12 +224,11 @@ struct zstream {
   //
   // All rborrows that return a non-null pointer must be paired with a
   // rrelease().
-  sizeptr<const void> rborrow(int id, ssize_t size)
-      SHARED_TRYLOCK_FUNCTION(true, buffer_lock_);
+  sizeptr<const void> rborrow(int id, ssize_t size) NO_THREAD_SAFETY_ANALYSIS;
 
   // Release memory borrowed with rborrow back to the buffer, advances the
   // read offset by the given size and releases locks.
-  void rrelease(int id, ssize_t size) UNLOCK_FUNCTION(buffer_lock_);
+  void rrelease(int id, ssize_t size);
 
   // Borrow memory for writing from the current write offset.  If the
   // requested size can't be granted (due to all the readers detaching),
@@ -237,11 +236,11 @@ struct zstream {
   //
   // All wborrows that return a non-null pointer must be paired with a
   // following wrelease.
-  void *wborrow(ssize_t size) SHARED_TRYLOCK_FUNCTION(true, buffer_lock_);
+  void *wborrow(ssize_t size) NO_THREAD_SAFETY_ANALYSIS;
 
   // Release memory borrowed with wborrow().  Size is the number of bytes
   // actually written to the buffer.
-  void wrelease(ssize_t size) UNLOCK_FUNCTION(buffer_lock_);
+  void wrelease(ssize_t size);
 
  private:
   // A memory-mapped pointer and size that can unmap itself.
