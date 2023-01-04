@@ -24,4 +24,4 @@ inline void *__folly_memcpy(  //
 #endif
 }  // extern "C"
 
-} // namespace sk
+}  // namespace sk

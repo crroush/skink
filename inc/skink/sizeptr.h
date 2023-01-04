@@ -69,4 +69,4 @@ struct sizeptr<T, std::enable_if_t<std::is_void_v<T>>> {
   ssize_t size_;
 };
 
-} // namespace sk
+}  // namespace sk

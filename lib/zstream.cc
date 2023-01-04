@@ -399,4 +399,4 @@ void zstream::inc_reader(int id, int64_t nbytes) {
   reader_scan_lock_.unlock();
 }
 
-} // namespace sk
+}  // namespace sk

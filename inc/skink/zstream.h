@@ -476,4 +476,4 @@ struct zstream {
       SHARED_LOCKS_REQUIRED(buffer_lock_);
 };
 
-} // namespace sk
+}  // namespace sk

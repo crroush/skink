@@ -214,4 +214,4 @@ struct xoros256ss : prng_base<xoros256ss> {
 // Expose xoroshiro256** as the default PRNG.
 using prng = xoros256ss;
 
-} // namespace sk
+}  // namespace sk
