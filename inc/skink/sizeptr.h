@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <type_traits>
 
+namespace sk {
+
 // A simple pointer + size type.  Does not manage the pointer memory, just
 // supports tying the underlying memory size with the pointer itself.
 
@@ -66,3 +68,5 @@ struct sizeptr<T, std::enable_if_t<std::is_void_v<T>>> {
   T *ptr_;
   ssize_t size_;
 };
+
+} // namespace sk

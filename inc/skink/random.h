@@ -24,6 +24,8 @@
 #include <absl/base/attributes.h>
 #include <absl/numeric/bits.h>
 
+namespace sk {
+
 // We don't actually use this variable but we'll use its pointer as a random
 // per-process seed value to use in the prng by default.  This let's us have a
 // default seed but avoids people accidentally relying on exactly what it is.
@@ -211,3 +213,5 @@ struct xoros256ss : prng_base<xoros256ss> {
 
 // Expose xoroshiro256** as the default PRNG.
 using prng = xoros256ss;
+
+} // namespace sk

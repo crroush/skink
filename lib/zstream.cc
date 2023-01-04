@@ -7,6 +7,8 @@
 
 #include <limits>
 
+namespace sk {
+
 zstream::~zstream() {
   // Close write end of the pipe.
   wrclose();
@@ -396,3 +398,5 @@ void zstream::inc_reader(int id, int64_t nbytes) {
   }
   reader_scan_lock_.unlock();
 }
+
+} // namespace sk

@@ -36,6 +36,8 @@
 #define DCHECK(condition)
 #endif
 
+namespace sk {
+
 // A single-writer, multiple-reader thread safe stream.  This class lets you
 // write a stream of bytes which are deliver to multiple readers (each reader
 // sees a complete copy of the data).  Multiple concurrent calls to write data
@@ -473,3 +475,5 @@ struct zstream {
   ssize_t await_data(int64_t offset, ssize_t min_bytes)
       SHARED_LOCKS_REQUIRED(buffer_lock_);
 };
+
+} // namespace sk

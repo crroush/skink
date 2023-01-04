@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+using namespace ::sk;
 using namespace ::testing;
 
 template <typename T>

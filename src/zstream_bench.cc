@@ -14,6 +14,8 @@
 #include <CLI/Config.hpp>
 #include <CLI/Formatter.hpp>
 
+using namespace ::sk;
+
 // Returns current wall clock time, in seconds.
 inline double stopwatch() {
   struct timespec tv;

@@ -3,6 +3,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+using namespace ::sk;
 using namespace ::testing;
 
 using ::testing::AllOf;

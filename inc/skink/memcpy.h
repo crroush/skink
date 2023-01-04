@@ -5,6 +5,8 @@
 
 #include <cstring>
 
+namespace sk {
+
 // Bindings for folly memcpy implementation.
 extern "C" {
 void *__folly_memcpy(  //
@@ -20,5 +22,6 @@ inline void *__folly_memcpy(  //
   return memcpy(dst, src, size);
 }
 #endif
-
 }  // extern "C"
+
+} // namespace sk

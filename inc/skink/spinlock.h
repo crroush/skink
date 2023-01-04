@@ -6,6 +6,8 @@
 #include <atomic>
 #include "absl/base/thread_annotations.h"
 
+namespace sk {
+
 // A test-and-test-and-set (TATAS) spinlock.  The nested load checks when the
 // lock _might_ be available before attempting to acquire it.  Since the cache
 // coherency protocol can service multiple readers, this prevents the atomic
@@ -43,3 +45,5 @@ struct ABSL_LOCKABLE spinlock {
  private:
   mutable std::atomic<bool> flag_ = false;
 };
+
+} // namespace sk
