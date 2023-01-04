@@ -46,4 +46,4 @@ struct ABSL_LOCKABLE spinlock {
   mutable std::atomic<bool> flag_ = false;
 };
 
-} // namespace sk
+}  // namespace sk

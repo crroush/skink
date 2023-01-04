@@ -11,7 +11,8 @@ using ::testing::Ge;
 using ::testing::Le;
 using ::testing::Lt;
 
-template <typename T> void TestIntInRange(xoros256ss &prng) {
+template <typename T>
+void TestIntInRange(xoros256ss &prng) {
   EXPECT_THAT(prng.uniform_int<T>(),
               AllOf(Ge(std::numeric_limits<T>::min()),
                     Le(std::numeric_limits<T>::max())));
