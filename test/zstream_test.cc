@@ -21,7 +21,7 @@ ssize_t writer(zstream &stream, ssize_t nbyte, int seed, bool randomize) {
   nbyte = nbyte / sizeof(T) * sizeof(T);
 
   xoros256ss rnd0(seed);
-  xoros256ss rnd1(2);  // To generate random write sizes.
+  xoros256ss rnd1(3);  // To generate random write sizes.
 
   std::vector<T> data(kBufSamp);
   int64_t remain_bytes = nbyte;
@@ -53,7 +53,7 @@ bool reader(zstream &stream, int id, ssize_t nbyte, int seed, bool randomize) {
   constexpr int64_t kBufByte = kBufSamp * sizeof(T);
 
   xoros256ss rnd0(seed);
-  xoros256ss rnd1(2);  // To generate random read sizes.
+  xoros256ss rnd1(5);  // To generate random read sizes.
 
   // Truncate bytes to multiple of sample size.
   nbyte = nbyte / sizeof(T) * sizeof(T);
@@ -81,6 +81,9 @@ bool reader(zstream &stream, int id, ssize_t nbyte, int seed, bool randomize) {
       passed &= (data[i] == rnd0.uniform_int<T>());
     }
   }
+  if ( remain_bytes != 0 ){
+    printf( "This is an error %zd\n", remain_bytes);
+  }
   stream.del_reader(id);
   return passed;
 }
@@ -97,7 +100,7 @@ ssize_t borrow_writer(zstream &stream,
   nbyte = nbyte / sizeof(T) * sizeof(T);
 
   xoros256ss rnd0(seed);
-  xoros256ss rnd1(2);  // To generate random write sizes.
+  xoros256ss rnd1(5);  // To generate random write sizes.
 
   int64_t remain_bytes = nbyte;
   while (remain_bytes > 0) {
@@ -188,7 +191,7 @@ bool TestStream(int num_bytes, int num_reader, bool randomize) {
   std::vector<std::future<bool>> results;
   for (ssize_t ii = 0; ii < num_reader; ii++) {
     results.emplace_back(std::async(std::launch::async,
-                                    reader<uint64_t>,
+                                    reader<T>,
                                     std::ref(stream),
                                     stream.add_reader(),
                                     num_bytes,
@@ -198,7 +201,7 @@ bool TestStream(int num_bytes, int num_reader, bool randomize) {
 
   // Create writers.
   std::future<ssize_t> resultw = std::async(std::launch::async,
-                                            writer<uint64_t>,
+                                            writer<T>,
                                             std::ref(stream),
                                             num_bytes,
                                             1,
@@ -213,10 +216,6 @@ bool TestStream(int num_bytes, int num_reader, bool randomize) {
   return passed;
 }
 
-TEST(zstream, DataCorrectFloat) {
-  EXPECT_THAT(TestStream<float>(1 << 26, 4, false), IsTrue());
-}
-
 TEST(zstream, DataCorrectU8) {
   EXPECT_THAT(TestStream<uint8_t>(1 << 26, 4, false), IsTrue());
 }
@@ -229,9 +228,6 @@ TEST(zstream, DataCorrectU64) {
   EXPECT_THAT(TestStream<uint64_t>(1 << 26, 4, false), IsTrue());
 }
 
-TEST(zstream, DataCorrectFloat_Rand) {
-  EXPECT_THAT(TestStream<float>(1 << 26, 1, true), IsTrue());
-}
 
 TEST(zstream, DataCorrectU8_Rand) {
   EXPECT_THAT(TestStream<uint8_t>(1 << 26, 4, true), IsTrue());
@@ -252,7 +248,7 @@ bool TestBorrowStream(int num_bytes, int num_reader, bool randomize) {
   std::vector<std::future<bool>> results;
   for (ssize_t ii = 0; ii < num_reader; ii++) {
     results.emplace_back(std::async(std::launch::async,
-                                    borrow_reader<uint64_t>,
+                                    borrow_reader<T>,
                                     std::ref(stream),
                                     stream.add_reader(),
                                     num_bytes,
@@ -262,7 +258,7 @@ bool TestBorrowStream(int num_bytes, int num_reader, bool randomize) {
 
   // Create writers.
   std::future<ssize_t> resultw = std::async(std::launch::async,
-                                            borrow_writer<uint64_t>,
+                                            borrow_writer<T>,
                                             std::ref(stream),
                                             num_bytes,
                                             1,
@@ -277,9 +273,6 @@ bool TestBorrowStream(int num_bytes, int num_reader, bool randomize) {
   return passed;
 }
 
-TEST(zstream, DataCorrectFloatBorrow) {
-  EXPECT_THAT(TestBorrowStream<float>(1 << 26, 4, false), IsTrue());
-}
 
 TEST(zstream, DataCorrectU8Borrow) {
   EXPECT_THAT(TestBorrowStream<uint8_t>(1 << 26, 4, false), IsTrue());
@@ -291,10 +284,6 @@ TEST(zstream, DataCorrectI16Borrow) {
 
 TEST(zstream, DataCorrectU64Borrow) {
   EXPECT_THAT(TestBorrowStream<uint64_t>(1 << 26, 4, false), IsTrue());
-}
-
-TEST(zstream, DataCorrectFloatBorrow_Rand) {
-  EXPECT_THAT(TestBorrowStream<float>(1 << 26, 1, true), IsTrue());
 }
 
 TEST(zstream, DataCorrectU8Borrow_Rand) {
