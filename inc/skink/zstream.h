@@ -13,9 +13,9 @@
 
 // third party libraries
 #include <absl/base/optimization.h>
+#include <absl/base/thread_annotations.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
-#include <absl/base/thread_annotations.h>
 #include <spdlog/spdlog.h>
 
 // linux
@@ -197,7 +197,8 @@ struct zstream {
   // finishing the write, then less data than requested may be written.
   //
   // Returns number of bytes actually written (-1 on error).
-  ssize_t write(const void *ptr, ssize_t nbytes) ABSL_LOCKS_EXCLUDED(buffer_lock_);
+  ssize_t write(const void *ptr, ssize_t nbytes)
+      ABSL_LOCKS_EXCLUDED(buffer_lock_);
 
   // Reads a given number of bytes from the buffer using the given reader
   // offset.  Blocks until all data requested is read, unless the writer is
@@ -227,7 +228,8 @@ struct zstream {
   //
   // All rborrows that return a non-null pointer must be paired with a
   // rrelease().
-  sizeptr<const void> rborrow(int id, ssize_t size) ABSL_NO_THREAD_SAFETY_ANALYSIS;
+  sizeptr<const void> rborrow(int id,
+                              ssize_t size) ABSL_NO_THREAD_SAFETY_ANALYSIS;
 
   // Release memory borrowed with rborrow back to the buffer, advances the
   // read offset by the given size and releases locks.
@@ -424,7 +426,9 @@ struct zstream {
       return curval;
     }
 
-    void Lock() const ABSL_EXCLUSIVE_LOCK_FUNCTION(lock_) { lock_.WriterLock(); }
+    void Lock() const ABSL_EXCLUSIVE_LOCK_FUNCTION(lock_) {
+      lock_.WriterLock();
+    }
 
     void Unlock() const ABSL_UNLOCK_FUNCTION(lock_) { lock_.WriterUnlock(); }
 
@@ -454,8 +458,9 @@ struct zstream {
   bool wrclosed() { return wroffset_.closed(); }
 
   // Increment a read offset.
-  void inc_reader(int id, int64_t nbytes) ABSL_SHARED_LOCKS_REQUIRED(buffer_lock_)
-      ABSL_LOCKS_EXCLUDED(reader_lock_);
+  void inc_reader(int id, int64_t nbytes)
+      ABSL_SHARED_LOCKS_REQUIRED(buffer_lock_)
+          ABSL_LOCKS_EXCLUDED(reader_lock_);
 
   // Return current space in bytes available for writing.
   int64_t wravail() const ABSL_SHARED_LOCKS_REQUIRED(buffer_lock_) {
