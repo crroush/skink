@@ -345,16 +345,18 @@ void zstream::del_reader(int id) {
   readers_.erase(iter);
 
   // Update the minimum read offset in case this reader was the blocker.
-  if (!readers_.empty() && offset == min_read_offset_) {
-    reader_scan_lock_.lock();
+  if (!readers_.empty()) {
     if (offset == min_read_offset_) {
-      int64_t min_offset = std::numeric_limits<int64_t>::max();
-      for (const auto &pair : readers_) {
-        min_offset = std::min(min_offset, pair.second.value());
+      reader_scan_lock_.lock();
+      if (offset == min_read_offset_) {
+        int64_t min_offset = std::numeric_limits<int64_t>::max();
+        for (const auto &pair : readers_) {
+          min_offset = std::min(min_offset, pair.second.value());
+        }
+        min_read_offset_.SetMax(min_offset);
       }
-      min_read_offset_.SetMax(min_offset);
+      reader_scan_lock_.unlock();
     }
-    reader_scan_lock_.unlock();
   } else {
     // Mark minimum read offset as closed to allow writer to free wheel.
     min_read_offset_.close();
