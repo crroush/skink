@@ -82,7 +82,7 @@ bool reader(zstream &stream, int id, ssize_t nbyte, int seed, bool randomize) {
     }
   }
   if ( remain_bytes != 0 ){
-    printf( "This is an error %zd\n", remain_bytes);
+    passed = false;
   }
   stream.del_reader(id);
   return passed;
@@ -165,6 +165,10 @@ bool borrow_reader(zstream &stream,
     stream.rrelease(id, toread);
 
     remain_bytes -= ptr.size();
+  }
+
+  if ( remain_bytes != 0 ){
+    passed = false;
   }
   stream.del_reader(id);
   return passed;
