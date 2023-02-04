@@ -83,7 +83,7 @@ bool reader(zstream &stream, int id, ssize_t nbyte, int seed, bool randomize) {
   }
 
   stream.del_reader(id);
-  return remain_bytes == 0;
+  return passed && (remain_bytes == 0);
 }
 
 template <typename T>
@@ -200,12 +200,8 @@ bool TestStream(int num_bytes, int num_reader, bool randomize) {
   }
 
   // Create writers.
-  std::future<ssize_t> resultw = std::async(std::launch::async,
-                                            writer<T>,
-                                            std::ref(stream),
-                                            num_bytes,
-                                            1,
-                                            randomize);
+  std::future<ssize_t> resultw = std::async(
+      std::launch::async, writer<T>, std::ref(stream), num_bytes, 1, randomize);
 
   bool passed = true;
   for (ssize_t ii = 0; ii < num_reader; ii++) {
@@ -227,7 +223,6 @@ TEST(zstream, DataCorrectI16) {
 TEST(zstream, DataCorrectU64) {
   EXPECT_THAT(TestStream<uint64_t>(1 << 26, 4, false), IsTrue());
 }
-
 
 TEST(zstream, DataCorrectU8_Rand) {
   EXPECT_THAT(TestStream<uint8_t>(1 << 26, 4, true), IsTrue());
@@ -271,7 +266,6 @@ bool TestBorrowStream(int num_bytes, int num_reader, bool randomize) {
   EXPECT_THAT(resultw.get(), Eq(num_bytes));
   return passed;
 }
-
 
 TEST(zstream, DataCorrectU8Borrow) {
   EXPECT_THAT(TestBorrowStream<uint8_t>(1 << 26, 4, false), IsTrue());
