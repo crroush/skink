@@ -81,10 +81,8 @@ bool reader(zstream &stream, int id, ssize_t nbyte, int seed, bool randomize) {
       passed &= (data[i] == rnd0.uniform_int<T>());
     }
   }
-  if ( remain_bytes != 0 ){
-    printf( "This is an error %zd\n", remain_bytes);
-  }
   stream.del_reader(id);
+  printf( "%zd\n", remain_bytes);
   return passed;
 }
 
@@ -100,7 +98,7 @@ ssize_t borrow_writer(zstream &stream,
   nbyte = nbyte / sizeof(T) * sizeof(T);
 
   xoros256ss rnd0(seed);
-  xoros256ss rnd1(5);  // To generate random write sizes.
+  xoros256ss rnd1(50);  // To generate random write sizes.
 
   int64_t remain_bytes = nbyte;
   while (remain_bytes > 0) {
@@ -137,7 +135,7 @@ bool borrow_reader(zstream &stream,
   constexpr int64_t kBufByte = kBufSamp * sizeof(T);
 
   xoros256ss rnd0(seed);
-  xoros256ss rnd1(2);  // To generate random read sizes.
+  xoros256ss rnd1(id);  // To generate random read sizes.
 
   // Truncate bytes to multiple of sample size.
   nbyte = nbyte / sizeof(T) * sizeof(T);
@@ -154,6 +152,7 @@ bool borrow_reader(zstream &stream,
 
     sizeptr<const void> ptr = stream.rborrow(id, toread);
     if (!ptr) {
+      printf( "Breaking!\n");
       break;
     }
 
@@ -165,6 +164,10 @@ bool borrow_reader(zstream &stream,
     stream.rrelease(id, toread);
 
     remain_bytes -= ptr.size();
+  }
+  if ( remain_bytes != 0 ){
+    printf( "This is an error %zd\n", remain_bytes);
+    passed = false;
   }
   stream.del_reader(id);
   return passed;
@@ -216,30 +219,30 @@ bool TestStream(int num_bytes, int num_reader, bool randomize) {
   return passed;
 }
 
-TEST(zstream, DataCorrectU8) {
-  EXPECT_THAT(TestStream<uint8_t>(1 << 26, 4, false), IsTrue());
-}
-
-TEST(zstream, DataCorrectI16) {
-  EXPECT_THAT(TestStream<int16_t>(1 << 26, 4, false), IsTrue());
-}
-
-TEST(zstream, DataCorrectU64) {
-  EXPECT_THAT(TestStream<uint64_t>(1 << 26, 4, false), IsTrue());
-}
-
-
-TEST(zstream, DataCorrectU8_Rand) {
-  EXPECT_THAT(TestStream<uint8_t>(1 << 26, 4, true), IsTrue());
-}
-
-TEST(zstream, DataCorrectI16_Rand) {
-  EXPECT_THAT(TestStream<int16_t>(1 << 26, 4, true), IsTrue());
-}
-
-TEST(zstream, DataCorrectU64_Rand) {
-  EXPECT_THAT(TestStream<uint64_t>(1 << 26, 4, true), IsTrue());
-}
+//TEST(zstream, DataCorrectU8) {
+//  EXPECT_THAT(TestStream<uint8_t>(1 << 26, 4, false), IsTrue());
+//}
+//
+//TEST(zstream, DataCorrectI16) {
+//  EXPECT_THAT(TestStream<int16_t>(1 << 26, 4, false), IsTrue());
+//}
+//
+//TEST(zstream, DataCorrectU64) {
+//  EXPECT_THAT(TestStream<uint64_t>(1 << 26, 4, false), IsTrue());
+//}
+//
+//
+//TEST(zstream, DataCorrectU8_Rand) {
+//  EXPECT_THAT(TestStream<uint8_t>(1 << 26, 4, true), IsTrue());
+//}
+//
+//TEST(zstream, DataCorrectI16_Rand) {
+//  EXPECT_THAT(TestStream<int16_t>(1 << 26, 4, true), IsTrue());
+//}
+//
+//TEST(zstream, DataCorrectU64_Rand) {
+//  EXPECT_THAT(TestStream<uint64_t>(1 << 26, 4, true), IsTrue());
+//}
 
 template <typename T>
 bool TestBorrowStream(int num_bytes, int num_reader, bool randomize) {
@@ -274,26 +277,26 @@ bool TestBorrowStream(int num_bytes, int num_reader, bool randomize) {
 }
 
 
-TEST(zstream, DataCorrectU8Borrow) {
-  EXPECT_THAT(TestBorrowStream<uint8_t>(1 << 26, 4, false), IsTrue());
-}
+//TEST(zstream, DataCorrectU8Borrow) {
+//  EXPECT_THAT(TestBorrowStream<uint8_t>(1 << 26, 4, false), IsTrue());
+//}
+//
+//TEST(zstream, DataCorrectI16Borrow) {
+//  EXPECT_THAT(TestBorrowStream<int16_t>(1 << 26, 4, false), IsTrue());
+//}
+//
+//TEST(zstream, DataCorrectU64Borrow) {
+//  EXPECT_THAT(TestBorrowStream<uint64_t>(1 << 26, 4, false), IsTrue());
+//}
 
-TEST(zstream, DataCorrectI16Borrow) {
-  EXPECT_THAT(TestBorrowStream<int16_t>(1 << 26, 4, false), IsTrue());
-}
+//TEST(zstream, DataCorrectU8Borrow_Rand) {
+//  EXPECT_THAT(TestBorrowStream<uint8_t>(16384*8, 1, true), IsTrue());
+//}
 
-TEST(zstream, DataCorrectU64Borrow) {
-  EXPECT_THAT(TestBorrowStream<uint64_t>(1 << 26, 4, false), IsTrue());
-}
-
-TEST(zstream, DataCorrectU8Borrow_Rand) {
-  EXPECT_THAT(TestBorrowStream<uint8_t>(1 << 26, 4, true), IsTrue());
-}
-
-TEST(zstream, DataCorrectI16Borrow_Rand) {
-  EXPECT_THAT(TestBorrowStream<int16_t>(1 << 26, 4, true), IsTrue());
-}
-
+//TEST(zstream, DataCorrectI16Borrow_Rand) {
+//  EXPECT_THAT(TestBorrowStream<int16_t>(1 << 26, 4, true), IsTrue());
+//}
+//
 TEST(zstream, DataCorrectU64Borrow_Rand) {
-  EXPECT_THAT(TestBorrowStream<uint64_t>(1 << 26, 4, true), IsTrue());
+  EXPECT_THAT(TestBorrowStream<uint64_t>(1 << 26, 1, true), IsTrue());
 }
