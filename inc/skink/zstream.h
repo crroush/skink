@@ -13,6 +13,7 @@
 
 // third party libraries
 #include <absl/base/optimization.h>
+#include <absl/base/thread_annotations.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 #include <spdlog/spdlog.h>
@@ -158,14 +159,14 @@ struct zstream {
   ~zstream();
 
   // Returns current size of buffer, in bytes.
-  ssize_t size() const LOCKS_EXCLUDED(buffer_lock_) {
+  ssize_t size() const ABSL_LOCKS_EXCLUDED(buffer_lock_) {
     DCHECK(!failed());
     absl::ReaderMutexLock lock(&buffer_lock_);
     return buffer_.size();
   }
 
   // Returns true if the zcbuffer has failed to map memory somehow.
-  bool failed() const LOCKS_EXCLUDED(buffer_lock_) {
+  bool failed() const ABSL_LOCKS_EXCLUDED(buffer_lock_) {
     absl::ReaderMutexLock lock(&buffer_lock_);
     return buffer_.data() == nullptr;
   }
@@ -179,24 +180,25 @@ struct zstream {
   void wrclose() { wroffset_.close(); }
 
   // Adds a reader to the buffer and returns an integer identifying it.
-  int add_reader() LOCKS_EXCLUDED(reader_lock_);
+  int add_reader() ABSL_LOCKS_EXCLUDED(reader_lock_);
 
   // Removes a given reader from the buffer.  Noop if no such reader exists.
-  void del_reader(int id) LOCKS_EXCLUDED(reader_lock_);
+  void del_reader(int id) ABSL_LOCKS_EXCLUDED(reader_lock_);
 
   // Ensures that the buffer is large enough that it can accommodate borrowing
   // memory of at least the given size bytes.  The buffer size is never shrunk
   // so this may be a noop if it is already large enough.
   //
   // Returns true on success, false if the buffer couldn't be resized.
-  bool resize(ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
+  bool resize(ssize_t nbytes) ABSL_LOCKS_EXCLUDED(buffer_lock_);
 
   // Writes bytes to the stream.  If not enough space is available, blocks
   // until all the data is written.  If all the readers are removed before
   // finishing the write, then less data than requested may be written.
   //
   // Returns number of bytes actually written (-1 on error).
-  ssize_t write(const void *ptr, ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
+  ssize_t write(const void *ptr, ssize_t nbytes)
+      ABSL_LOCKS_EXCLUDED(buffer_lock_);
 
   // Reads a given number of bytes from the buffer using the given reader
   // offset.  Blocks until all data requested is read, unless the writer is
@@ -214,19 +216,20 @@ struct zstream {
   //
   // Returns the number of bytes actually read.
   ssize_t read(int id, void *ptr, ssize_t nbytes, ssize_t ncons = -1)
-      LOCKS_EXCLUDED(buffer_lock_, reader_lock_);
+      ABSL_LOCKS_EXCLUDED(buffer_lock_, reader_lock_);
 
   // Skip the given number of bytes for the given reader.  The read offset is
   // moved forward and the data is no longer accessible to this reader.
   //
   // Returns false if no such reader exists.
-  bool skip(int id, ssize_t nbytes) LOCKS_EXCLUDED(buffer_lock_);
+  bool skip(int id, ssize_t nbytes) ABSL_LOCKS_EXCLUDED(buffer_lock_);
 
   // Borrow memory for reading from the current offset of the reader.
   //
   // All rborrows that return a non-null pointer must be paired with a
   // rrelease().
-  sizeptr<const void> rborrow(int id, ssize_t size) NO_THREAD_SAFETY_ANALYSIS;
+  sizeptr<const void> rborrow(int id,
+                              ssize_t size) ABSL_NO_THREAD_SAFETY_ANALYSIS;
 
   // Release memory borrowed with rborrow back to the buffer, advances the
   // read offset by the given size and releases locks.
@@ -238,7 +241,7 @@ struct zstream {
   //
   // All wborrows that return a non-null pointer must be paired with a
   // following wrelease.
-  void *wborrow(ssize_t size) NO_THREAD_SAFETY_ANALYSIS;
+  void *wborrow(ssize_t size) ABSL_NO_THREAD_SAFETY_ANALYSIS;
 
   // Release memory borrowed with wborrow().  Size is the number of bytes
   // actually written to the buffer.
@@ -325,48 +328,48 @@ struct zstream {
   struct Offset {
     Offset(int64_t value = 0) : value_(value) {}
 
-    Offset(const Offset &b) LOCKS_EXCLUDED(lock_, b.lock_)
+    Offset(const Offset &b) ABSL_LOCKS_EXCLUDED(lock_, b.lock_)
         : value_(static_cast<int64_t>(b)) {}
 
-    Offset(Offset &&b) LOCKS_EXCLUDED(lock_, b.lock_)
+    Offset(Offset &&b) ABSL_LOCKS_EXCLUDED(lock_, b.lock_)
         : value_(static_cast<int64_t>(b)) {}
 
     // Get the underlying value atomicly without a lock.
-    int64_t value() const NO_THREAD_SAFETY_ANALYSIS { return value_; }
+    int64_t value() const ABSL_NO_THREAD_SAFETY_ANALYSIS { return value_; }
 
     // Mark the offset as closed.
-    void close() LOCKS_EXCLUDED(lock_) {
+    void close() ABSL_LOCKS_EXCLUDED(lock_) {
       absl::WriterMutexLock lock(&lock_);
       closed_.store(true, std::memory_order_release);
     }
 
     // Mark the offset as open again and allow it to be used.
-    void open() LOCKS_EXCLUDED(lock_) {
+    void open() ABSL_LOCKS_EXCLUDED(lock_) {
       absl::WriterMutexLock lock(&lock_);
       closed_.store(false, std::memory_order_release);
     }
 
     // Returns true if the offset has been shutdown.
-    bool closed() const NO_THREAD_SAFETY_ANALYSIS {
+    bool closed() const ABSL_NO_THREAD_SAFETY_ANALYSIS {
       return closed_.load(std::memory_order_acquire);
     }
 
     // Set the underlying value atomicly.  Requires that the lock is held.
-    void set_atomic(int64_t value) EXCLUSIVE_LOCKS_REQUIRED(lock_) {
+    void set_atomic(int64_t value) ABSL_EXCLUSIVE_LOCKS_REQUIRED(lock_) {
       DCHECK(!closed());
       value_ = value;
     }
 
     operator int64_t() const { return value(); }
 
-    Offset &operator=(int64_t value) LOCKS_EXCLUDED(lock_) {
+    Offset &operator=(int64_t value) ABSL_LOCKS_EXCLUDED(lock_) {
       DCHECK(!closed());
       absl::WriterMutexLock lock(&lock_);
       value_ = value;
       return *this;
     }
 
-    Offset &operator+=(int64_t val) LOCKS_EXCLUDED(lock_) {
+    Offset &operator+=(int64_t val) ABSL_LOCKS_EXCLUDED(lock_) {
       DCHECK(!closed());
       absl::WriterMutexLock lock(&lock_);
       value_ = value_ + val;
@@ -375,7 +378,7 @@ struct zstream {
 
     // Set the value to v if v is greater than the current value, otherwise
     // do nothing.  Return the current value.
-    int64_t SetMax(int64_t v) LOCKS_EXCLUDED(lock_) {
+    int64_t SetMax(int64_t v) ABSL_LOCKS_EXCLUDED(lock_) {
       DCHECK(!closed());
       int64_t curval = value();
       if (v <= curval) {
@@ -397,7 +400,7 @@ struct zstream {
     //
     // Returns the current value which is always >= v unless the writer has
     // closed.
-    int64_t AwaitGe(int64_t v) const LOCKS_EXCLUDED(lock_) {
+    int64_t AwaitGe(int64_t v) const ABSL_LOCKS_EXCLUDED(lock_) {
       // Value is already larger than v or we're closed, return.
       int64_t curval = value();
       if (curval >= v || closed()) {
@@ -410,7 +413,7 @@ struct zstream {
     }
 
     // Synchronized part of AwaitGe.
-    int64_t AwaitGeLocked(int64_t v) const SHARED_LOCKS_REQUIRED(lock_) {
+    int64_t AwaitGeLocked(int64_t v) const ABSL_SHARED_LOCKS_REQUIRED(lock_) {
       int64_t curval = value_;
       if (curval < v) {
         const auto ready = [this, v]() {
@@ -423,14 +426,16 @@ struct zstream {
       return curval;
     }
 
-    void Lock() const EXCLUSIVE_LOCK_FUNCTION(lock_) { lock_.WriterLock(); }
+    void Lock() const ABSL_EXCLUSIVE_LOCK_FUNCTION(lock_) {
+      lock_.WriterLock();
+    }
 
-    void Unlock() const UNLOCK_FUNCTION(lock_) { lock_.WriterUnlock(); }
+    void Unlock() const ABSL_UNLOCK_FUNCTION(lock_) { lock_.WriterUnlock(); }
 
    private:
     mutable absl::Mutex lock_;
-    GUARDED_BY(lock_) AtomicInt64 value_;
-    GUARDED_BY(lock_) std::atomic<bool> closed_ = false;
+    ABSL_GUARDED_BY(lock_) AtomicInt64 value_;
+    ABSL_GUARDED_BY(lock_) std::atomic<bool> closed_ = false;
   };
 
   ABSL_CACHELINE_ALIGNED mutable absl::Mutex buffer_lock_;
@@ -438,9 +443,9 @@ struct zstream {
   ABSL_CACHELINE_ALIGNED Offset wroffset_        = 0;
   ABSL_CACHELINE_ALIGNED Offset min_read_offset_ = 0;
 
-  GUARDED_BY(buffer_lock_) MappedBuffer buffer_;
-  GUARDED_BY(reader_lock_) absl::flat_hash_map<int, AtomicInt64> readers_;
-  GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
+  ABSL_GUARDED_BY(buffer_lock_) MappedBuffer buffer_;
+  ABSL_GUARDED_BY(reader_lock_) absl::flat_hash_map<int, AtomicInt64> readers_;
+  ABSL_GUARDED_BY(reader_lock_) int reader_oneup_ = 0;
 
   spinlock reader_scan_lock_ ABSL_ACQUIRED_AFTER(reader_lock_);
 
@@ -453,11 +458,12 @@ struct zstream {
   bool wrclosed() { return wroffset_.closed(); }
 
   // Increment a read offset.
-  void inc_reader(int id, int64_t nbytes) SHARED_LOCKS_REQUIRED(buffer_lock_)
-      LOCKS_EXCLUDED(reader_lock_);
+  void inc_reader(int id, int64_t nbytes)
+      ABSL_SHARED_LOCKS_REQUIRED(buffer_lock_)
+          ABSL_LOCKS_EXCLUDED(reader_lock_);
 
   // Return current space in bytes available for writing.
-  int64_t wravail() const SHARED_LOCKS_REQUIRED(buffer_lock_) {
+  int64_t wravail() const ABSL_SHARED_LOCKS_REQUIRED(buffer_lock_) {
     return buffer_.size() - (wroffset_ - min_read_offset_);
   }
 
@@ -467,13 +473,13 @@ struct zstream {
   // Block until the given number of bytes are available for writing.  If all
   // the readers are removed before space becomes available, returns -1.
   ssize_t await_write_space(ssize_t min_bytes)
-      SHARED_LOCKS_REQUIRED(buffer_lock_);
+      ABSL_SHARED_LOCKS_REQUIRED(buffer_lock_);
 
   // Wait for the given number of bytes to become available for reading.  If
   // the writer is closed before all the space becomes available, may return a
   // short count.
   ssize_t await_data(int64_t offset, ssize_t min_bytes)
-      SHARED_LOCKS_REQUIRED(buffer_lock_);
+      ABSL_SHARED_LOCKS_REQUIRED(buffer_lock_);
 };
 
 }  // namespace sk

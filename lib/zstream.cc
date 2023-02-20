@@ -188,8 +188,10 @@ ssize_t zstream::await_write_space(ssize_t min_bytes) {
 
   navail = buffer_.size() - (wroffset - rdoffset);
   if (navail < min_bytes) {
+    buffer_lock_.ReaderUnlock();
     rdoffset = min_read_offset_.AwaitGe(rdoffset + (min_bytes - navail));
-    navail   = buffer_.size() - (wroffset - rdoffset);
+    buffer_lock_.ReaderLock();
+    navail = buffer_.size() - (wroffset - rdoffset);
   }
   return navail;
 }
@@ -301,9 +303,10 @@ ssize_t zstream::await_data(int64_t offset, ssize_t min_bytes) {
   }
 
   // Finally fall back to using the mutex to wait.
-  navail = rdavail(offset);
+  int64_t wroffset = wroffset_.value();
+  navail           = wroffset - offset;
   if (navail < min_bytes) {
-    int64_t min_offset = offset + (min_bytes - navail);
+    int64_t min_offset = wroffset + (min_bytes - navail);
 
     buffer_lock_.ReaderUnlock();
     navail = wroffset_.AwaitGe(min_offset) - offset;
