@@ -87,6 +87,11 @@ bool zstream::resize(ssize_t nbytes) {
   // Take out an exclusive lock on the buffer to resize it.
   absl::WriterMutexLock lock(&buffer_lock_);
 
+  // Check the size again now that we have the lock.
+  if (nbytes <= buffer_.size()) {
+    return true;
+  }
+
   // Steal the old mapped buffer, its destructor will unmap it.
   MappedBuffer old_buffer = std::move(buffer_);
 
@@ -182,16 +187,22 @@ ssize_t zstream::await_write_space(ssize_t min_bytes) {
     navail = wravail();
   }
 
-  // Finally fall back to using the mutex to sleep.
+  // Finally fall back to a slow polling loop.  We poll instead of waiting on
+  // the read offset because the buffer may be resized instead, which is another
+  // way for more write space to become available.
   int64_t wroffset = wroffset_;
   int64_t rdoffset = min_read_offset_;
 
   navail = buffer_.size() - (wroffset - rdoffset);
   if (navail < min_bytes) {
-    buffer_lock_.ReaderUnlock();
-    rdoffset = min_read_offset_.AwaitGe(rdoffset + (min_bytes - navail));
-    buffer_lock_.ReaderLock();
-    navail = buffer_.size() - (wroffset - rdoffset);
+
+    while (navail < min_bytes) {
+      buffer_lock_.ReaderUnlock();
+      usleep(1000);
+      buffer_lock_.ReaderLock();
+
+      navail = buffer_.size() - (wroffset - min_read_offset_);
+    }
   }
   return navail;
 }
